@@ -7,6 +7,7 @@ import {
   updateKnowledgeBase,
   deleteKnowledgeBase,
   addEntry,
+  batchAddEntries,
   listEntries,
   deleteEntry,
   searchKnowledge,
@@ -25,6 +26,7 @@ router.delete('/:id', deleteKnowledgeBase);
 
 router.get('/:id/entries', listEntries);
 router.post('/:id/entries', addEntry);
+router.post('/:id/entries/batch', batchAddEntries);
 router.delete('/:id/entries/:entryId', deleteEntry);
 
 router.get('/:id/search', searchKnowledge);

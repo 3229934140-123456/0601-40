@@ -3,28 +3,53 @@ import { simulateSummarize, simulateRewrite } from './ai.service';
 import { recordUsage } from './monitoring.service';
 import { toJSON, fromJSON } from '../utils/json';
 
-const runningTasks = new Map<string, { cancelled: boolean }>();
+interface RunningTaskState {
+  cancelled: boolean;
+  taskRunId?: string;
+}
+
+const runningTasks = new Map<string, RunningTaskState>();
 
 const isCancelled = (taskId: string): boolean => {
   const state = runningTasks.get(taskId);
   return state ? state.cancelled : false;
 };
 
+const getCurrentTaskRunId = (taskId: string): string | undefined => {
+  const state = runningTasks.get(taskId);
+  return state?.taskRunId;
+};
+
 const checkAndHandleCancellation = async (taskId: string): Promise<boolean> => {
   if (isCancelled(taskId)) {
+    const taskRunId = getCurrentTaskRunId(taskId);
+    const now = new Date();
+    
+    const updates: any = {
+      status: 'cancelled',
+      completedAt: now,
+    };
+
     await prisma.task.update({
       where: { id: taskId },
-      data: {
-        status: 'cancelled',
-        completedAt: new Date(),
-      },
+      data: updates,
     });
+
+    if (taskRunId) {
+      await prisma.taskRun.update({
+        where: { id: taskRunId },
+        data: {
+          status: 'cancelled',
+          completedAt: now,
+        },
+      });
+    }
     return true;
   }
   return false;
 };
 
-export const processTask = async (taskId: string) => {
+export const processTask = async (taskId: string, source: string = 'auto') => {
   const task = await prisma.task.findUnique({ where: { id: taskId } });
   if (!task) return;
 
@@ -53,6 +78,22 @@ export const processTask = async (taskId: string) => {
 
     if (updateResult.count === 0) {
       return;
+    }
+
+    const taskRun = await prisma.taskRun.create({
+      data: {
+        taskId,
+        runIndex: task.retryCount,
+        status: 'running',
+        source,
+        inputData: task.inputData,
+        startedAt: new Date(),
+      },
+    });
+
+    const state = runningTasks.get(taskId);
+    if (state) {
+      state.taskRunId = taskRun.id;
     }
 
     if (await checkAndHandleCancellation(taskId)) return;
@@ -109,10 +150,24 @@ export const processTask = async (taskId: string) => {
     });
 
     if (finalUpdate.count > 0) {
+      const taskRunId = getCurrentTaskRunId(taskId);
+      if (taskRunId) {
+        await prisma.taskRun.update({
+          where: { id: taskRunId },
+          data: {
+            status: 'completed',
+            outputData: toJSON(outputData),
+            completedAt: new Date(),
+          },
+        });
+      }
       await recordUsage(task.apiKeyId, `task_${task.type}`, 1, tokens);
     }
   } catch (error: any) {
     if (isCancelled(taskId)) {
+      const taskRunId = getCurrentTaskRunId(taskId);
+      const now = new Date();
+      
       await prisma.task.updateMany({
         where: {
           id: taskId,
@@ -120,12 +175,23 @@ export const processTask = async (taskId: string) => {
         },
         data: {
           status: 'cancelled',
-          completedAt: new Date(),
+          completedAt: now,
         },
       });
+
+      if (taskRunId) {
+        await prisma.taskRun.update({
+          where: { id: taskRunId },
+          data: {
+            status: 'cancelled',
+            completedAt: now,
+          },
+        });
+      }
       return;
     }
 
+    const taskRunId = getCurrentTaskRunId(taskId);
     const newRetryCount = task.retryCount + 1;
     const shouldRetry = newRetryCount < task.maxRetries;
 
@@ -138,6 +204,17 @@ export const processTask = async (taskId: string) => {
         progress: 0,
       },
     });
+
+    if (taskRunId) {
+      await prisma.taskRun.update({
+        where: { id: taskRunId },
+        data: {
+          status: 'failed',
+          errorMessage: error.message,
+          completedAt: new Date(),
+        },
+      });
+    }
 
     try {
       await prisma.errorLog.create({
@@ -165,7 +242,7 @@ export const processTask = async (taskId: string) => {
     if (shouldRetry) {
       setTimeout(() => {
         if (!isCancelled(taskId)) {
-          processTask(taskId);
+          processTask(taskId, 'auto_retry');
         }
       }, 2000 * newRetryCount);
     }
@@ -195,7 +272,10 @@ const simulateProgress = async (
   }
 };
 
-export const cancelTask = async (taskId: string): Promise<{ success: boolean; status: string }> => {
+export const cancelTask = async (
+  taskId: string,
+  cancelledBy: string = 'system'
+): Promise<{ success: boolean; status: string }> => {
   const task = await prisma.task.findUnique({
     where: { id: taskId },
     select: { status: true },
@@ -214,6 +294,8 @@ export const cancelTask = async (taskId: string): Promise<{ success: boolean; st
     taskState.cancelled = true;
   }
 
+  const now = new Date();
+
   const updateResult = await prisma.task.updateMany({
     where: {
       id: taskId,
@@ -221,11 +303,26 @@ export const cancelTask = async (taskId: string): Promise<{ success: boolean; st
     },
     data: {
       status: 'cancelled',
-      completedAt: new Date(),
+      completedAt: now,
+      cancelledAt: now,
+      cancelledBy,
     },
   });
 
   if (updateResult.count > 0) {
+    const latestRun = await prisma.taskRun.findFirst({
+      where: { taskId, status: 'running' },
+      orderBy: { runIndex: 'desc' },
+    });
+    if (latestRun) {
+      await prisma.taskRun.update({
+        where: { id: latestRun.id },
+        data: {
+          status: 'cancelled',
+          completedAt: now,
+        },
+      });
+    }
     return { success: true, status: 'cancelled' };
   }
 

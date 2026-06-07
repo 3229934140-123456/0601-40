@@ -115,6 +115,8 @@ model Task {
   maxRetries    Int       @default(3)
   startedAt     DateTime?
   completedAt   DateTime?
+  cancelledAt   DateTime?
+  cancelledBy   String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id])
@@ -134,12 +136,15 @@ model TaskRun {
   status        String    @default("running")
   inputData     String?
   outputData    String?
+  errorMessage  String?
+  source        String?
   startedAt     DateTime  @default(now())
   completedAt   DateTime?
   task          Task      @relation(fields: [taskId], references: [id])
   session       Session?  @relation(fields: [sessionId], references: [id])
 
   @@index([taskId])
+  @@index([status])
 }
 
 model KnowledgeBase {
@@ -164,13 +169,17 @@ model KnowledgeEntry {
   title         String
   content       String
   source        String?
+  tags          String?
   embedding     String?
   metadata      String?
   createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id])
 
   @@index([knowledgeBaseId])
   @@index([title])
+  @@index([source])
+  @@index([createdAt])
 }
 
 model Citation {

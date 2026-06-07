@@ -21,6 +21,8 @@ import {
   getErrorDetail,
   listAuditLogs,
   getAuditLogDetail,
+  getAuditStats,
+  exportAuditLogs,
 } from '../controllers/admin.controller';
 
 const router = Router();
@@ -52,6 +54,8 @@ router.get('/errors', adminAuth, listErrors);
 router.get('/errors/stats', adminAuth, getErrorStats);
 router.get('/errors/:id', adminAuth, getErrorDetail);
 
+router.get('/audit-logs/stats', adminAuth, getAuditStats);
+router.get('/audit-logs/export', adminAuth, exportAuditLogs);
 router.get('/audit-logs', adminAuth, listAuditLogs);
 router.get('/audit-logs/:id', adminAuth, getAuditLogDetail);
 

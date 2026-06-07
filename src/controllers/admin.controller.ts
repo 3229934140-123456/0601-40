@@ -78,6 +78,19 @@ export const createApiKey = asyncHandler(async (
   });
 
   if (existing) {
+    await recordAuditLog(
+      undefined,
+      'create_api_key',
+      'api_key',
+      undefined,
+      'fail',
+      {
+        details: { errorCode: 'APP_ID_EXISTS', errorMessage: 'App ID 已存在', appId: body.appId },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(409, 'APP_ID_EXISTS', 'App ID 已存在', '请使用不同的 App ID'));
   }
 
@@ -228,6 +241,19 @@ export const updateApiKey = asyncHandler(async (
 
   const apiKey = await prisma.apiKey.findUnique({ where: { id } });
   if (!apiKey) {
+    await recordAuditLog(
+      undefined,
+      'update_api_key',
+      'api_key',
+      id,
+      'fail',
+      {
+        details: { errorCode: 'API_KEY_NOT_FOUND', errorMessage: 'API Key 不存在' },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
@@ -291,6 +317,19 @@ export const deleteApiKey = asyncHandler(async (
 
   const apiKey = await prisma.apiKey.findUnique({ where: { id } });
   if (!apiKey) {
+    await recordAuditLog(
+      undefined,
+      'delete_api_key',
+      'api_key',
+      id,
+      'fail',
+      {
+        details: { errorCode: 'API_KEY_NOT_FOUND', errorMessage: 'API Key 不存在' },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
@@ -332,6 +371,19 @@ export const updateQuota = asyncHandler(async (
 
   const apiKey = await prisma.apiKey.findUnique({ where: { id } });
   if (!apiKey) {
+    await recordAuditLog(
+      undefined,
+      'update_quota',
+      'api_key',
+      id,
+      'fail',
+      {
+        details: { errorCode: 'API_KEY_NOT_FOUND', errorMessage: 'API Key 不存在' },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
@@ -382,6 +434,19 @@ export const resetQuota = asyncHandler(async (
 
   const apiKey = await prisma.apiKey.findUnique({ where: { id } });
   if (!apiKey) {
+    await recordAuditLog(
+      undefined,
+      'reset_quota',
+      'api_key',
+      id,
+      'fail',
+      {
+        details: { errorCode: 'API_KEY_NOT_FOUND', errorMessage: 'API Key 不存在' },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
@@ -435,6 +500,19 @@ export const createTemplate = asyncHandler(async (
   });
 
   if (existing) {
+    await recordAuditLog(
+      undefined,
+      'create_template',
+      'template',
+      undefined,
+      'fail',
+      {
+        details: { errorCode: 'TEMPLATE_CODE_EXISTS', errorMessage: '模板编码已存在', code: body.code },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(409, 'TEMPLATE_CODE_EXISTS', '模板编码已存在', '请使用不同的编码'));
   }
 
@@ -562,6 +640,19 @@ export const updateTemplate = asyncHandler(async (
 
   const template = await prisma.sceneTemplate.findUnique({ where: { id } });
   if (!template) {
+    await recordAuditLog(
+      undefined,
+      'update_template',
+      'template',
+      id,
+      'fail',
+      {
+        details: { errorCode: 'TEMPLATE_NOT_FOUND', errorMessage: '模板不存在' },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(404, 'TEMPLATE_NOT_FOUND', '模板不存在', '请检查 ID 是否正确'));
   }
 
@@ -623,6 +714,19 @@ export const deleteTemplate = asyncHandler(async (
 
   const template = await prisma.sceneTemplate.findUnique({ where: { id } });
   if (!template) {
+    await recordAuditLog(
+      undefined,
+      'delete_template',
+      'template',
+      id,
+      'fail',
+      {
+        details: { errorCode: 'TEMPLATE_NOT_FOUND', errorMessage: '模板不存在' },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(404, 'TEMPLATE_NOT_FOUND', '模板不存在', '请检查 ID 是否正确'));
   }
 
@@ -694,46 +798,63 @@ export const listFeedbacks = asyncHandler(async (
   res: Response,
   next: NextFunction
 ) => {
-  const query = listFeedbacksSchema.parse(req.query);
+  try {
+    const query = listFeedbacksSchema.parse(req.query);
 
-  const page = parseInt(query.page as string);
-  const pageSize = parseInt(query.pageSize as string);
-  const skip = (page - 1) * pageSize;
+    const page = parseInt(query.page as string);
+    const pageSize = parseInt(query.pageSize as string);
+    const skip = (page - 1) * pageSize;
 
-  const where: any = {};
-  if (query.rating) where.rating = parseInt(query.rating as string);
-  if (query.category) where.category = query.category;
+    const where: any = {};
+    if (query.rating) where.rating = parseInt(query.rating as string);
+    if (query.category) where.category = query.category;
 
-  const [feedbacks, total] = await Promise.all([
-    prisma.feedback.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: pageSize,
-    }),
-    prisma.feedback.count({ where }),
-  ]);
+    const [feedbacks, total] = await Promise.all([
+      prisma.feedback.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      prisma.feedback.count({ where }),
+    ]);
 
-  const data = feedbacks.map(f => ({
-    ...f,
-    metadata: fromJSON(f.metadata),
-  }));
+    const data = feedbacks.map(f => ({
+      ...f,
+      metadata: fromJSON(f.metadata),
+    }));
 
-  await recordAuditLog(
-    undefined,
-    'list_feedbacks',
-    'feedback',
-    undefined,
-    'success',
-    {
-      details: { total, page, pageSize },
-      operator: 'admin',
-      endpoint: req.originalUrl,
-      ip: req.ip,
-    }
-  );
+    await recordAuditLog(
+      undefined,
+      'list_feedbacks',
+      'feedback',
+      undefined,
+      'success',
+      {
+        details: { total, page, pageSize },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
 
-  paginatedResponse(res, data, total, page, pageSize, '获取反馈列表成功');
+    paginatedResponse(res, data, total, page, pageSize, '获取反馈列表成功');
+  } catch (error: any) {
+    await recordAuditLog(
+      undefined,
+      'list_feedbacks',
+      'feedback',
+      undefined,
+      'fail',
+      {
+        details: { errorMessage: error.message },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
+    throw error;
+  }
 });
 
 export const listErrors = asyncHandler(async (
@@ -741,46 +862,63 @@ export const listErrors = asyncHandler(async (
   res: Response,
   next: NextFunction
 ) => {
-  const query = listErrorsSchema.parse(req.query);
+  try {
+    const query = listErrorsSchema.parse(req.query);
 
-  const page = parseInt(query.page as string);
-  const pageSize = parseInt(query.pageSize as string);
-  const skip = (page - 1) * pageSize;
+    const page = parseInt(query.page as string);
+    const pageSize = parseInt(query.pageSize as string);
+    const skip = (page - 1) * pageSize;
 
-  const where: any = {};
-  if (query.errorCode) where.errorCode = query.errorCode;
-  if (query.endpoint) where.endpoint = { contains: query.endpoint };
+    const where: any = {};
+    if (query.errorCode) where.errorCode = query.errorCode;
+    if (query.endpoint) where.endpoint = { contains: query.endpoint };
 
-  const [errors, total] = await Promise.all([
-    prisma.errorLog.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: pageSize,
-    }),
-    prisma.errorLog.count({ where }),
-  ]);
+    const [errors, total] = await Promise.all([
+      prisma.errorLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      prisma.errorLog.count({ where }),
+    ]);
 
-  const data = errors.map(e => ({
-    ...e,
-    metadata: fromJSON(e.metadata),
-  }));
+    const data = errors.map(e => ({
+      ...e,
+      metadata: fromJSON(e.metadata),
+    }));
 
-  await recordAuditLog(
-    undefined,
-    'list_errors',
-    'error',
-    undefined,
-    'success',
-    {
-      details: { total, page, pageSize },
-      operator: 'admin',
-      endpoint: req.originalUrl,
-      ip: req.ip,
-    }
-  );
+    await recordAuditLog(
+      undefined,
+      'list_errors',
+      'error',
+      undefined,
+      'success',
+      {
+        details: { total, page, pageSize },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
 
-  paginatedResponse(res, data, total, page, pageSize, '获取错误日志成功');
+    paginatedResponse(res, data, total, page, pageSize, '获取错误日志成功');
+  } catch (error: any) {
+    await recordAuditLog(
+      undefined,
+      'list_errors',
+      'error',
+      undefined,
+      'fail',
+      {
+        details: { errorMessage: error.message },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
+    throw error;
+  }
 });
 
 export const getErrorStats = asyncHandler(async (
@@ -791,7 +929,13 @@ export const getErrorStats = asyncHandler(async (
   const { startDate, endDate } = req.query;
 
   const where: any = {};
-  if (startDate) where.createdAt = { ...where.createdAt, gte: new Date(startDate as string) };
+  if (startDate) {
+    where.createdAt = { ...where.createdAt, gte: new Date(startDate as string) };
+  } else {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    where.createdAt = { gte: sevenDaysAgo };
+  }
   if (endDate) {
     const end = new Date(endDate as string);
     end.setHours(23, 59, 59, 999);
@@ -802,18 +946,20 @@ export const getErrorStats = asyncHandler(async (
     by: ['errorCode'],
     where,
     _count: { errorCode: true },
+    _max: { createdAt: true },
     orderBy: { _count: { errorCode: 'desc' } },
     take: 10,
   });
 
-  const data = errors.map(e => ({
+  const topErrors = errors.map(e => ({
     errorCode: e.errorCode,
     count: e._count.errorCode,
+    lastOccurredAt: e._max.createdAt,
   }));
 
   successResponse(res, {
-    topErrors: data,
-    totalErrors: data.reduce((sum, d) => sum + d.count, 0),
+    topErrors,
+    totalErrors: topErrors.reduce((sum, d) => sum + d.count, 0),
   }, '获取错误统计成功');
 });
 
@@ -829,7 +975,49 @@ export const getErrorDetail = asyncHandler(async (
   });
 
   if (!error) {
+    await recordAuditLog(
+      undefined,
+      'get_error_detail',
+      'error',
+      id,
+      'fail',
+      {
+        details: { errorCode: 'ERROR_NOT_FOUND', errorMessage: '错误记录不存在' },
+        operator: 'admin',
+        endpoint: req.originalUrl,
+        ip: req.ip,
+      }
+    );
     return next(new AppError(404, 'ERROR_NOT_FOUND', '错误记录不存在', '请检查 ID 是否正确'));
+  }
+
+  const metadata = fromJSON(error.metadata);
+
+  let apiKey = null;
+  if (error.apiKeyId) {
+    const foundApiKey = await prisma.apiKey.findUnique({
+      where: { id: error.apiKeyId },
+      select: { id: true, name: true, appId: true },
+    });
+    if (foundApiKey) {
+      apiKey = foundApiKey;
+    }
+  }
+
+  let taskInfo = null;
+  let canRetry = false;
+  const taskId = metadata?.taskId;
+  if (taskId) {
+    const task = await prisma.task.findFirst({
+      where: { taskId },
+      select: { id: true, taskId: true, type: true, status: true, retryCount: true, maxRetries: true },
+    });
+    if (task) {
+      taskInfo = task;
+      if (task.status === 'failed' && task.retryCount < task.maxRetries) {
+        canRetry = true;
+      }
+    }
   }
 
   await recordAuditLog(
@@ -846,8 +1034,18 @@ export const getErrorDetail = asyncHandler(async (
   );
 
   successResponse(res, {
-    ...error,
-    metadata: fromJSON(error.metadata),
+    id: error.id,
+    errorCode: error.errorCode,
+    errorMessage: error.errorMessage,
+    stackTrace: error.stackTrace,
+    endpoint: error.endpoint,
+    apiKeyId: error.apiKeyId,
+    retrySuggestion: error.retrySuggestion,
+    metadata,
+    createdAt: error.createdAt,
+    apiKey,
+    taskInfo,
+    canRetry,
   }, '获取错误详情成功');
 });
 
@@ -923,4 +1121,210 @@ export const getAuditLogDetail = asyncHandler(async (
     ...log,
     details: fromJSON(log.details),
   }, '获取审计日志详情成功');
+});
+
+const getAuditStatsSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+export const getAuditStats = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const query = getAuditStatsSchema.parse(req.query);
+
+  const where: any = {};
+  if (query.startDate || query.endDate) {
+    where.createdAt = {};
+    if (query.startDate) where.createdAt.gte = new Date(query.startDate as string);
+    if (query.endDate) {
+      const end = new Date(query.endDate as string);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt.lte = end;
+    }
+  }
+
+  const [totalLogs, byActionRaw, byResourceTypeRaw, topActionsRaw] = await Promise.all([
+    prisma.auditLog.groupBy({
+      by: ['result'],
+      where,
+      _count: { result: true },
+    }),
+    prisma.auditLog.groupBy({
+      by: ['action', 'result'],
+      where,
+      _count: { action: true },
+      orderBy: { _count: { action: 'desc' } },
+    }),
+    prisma.auditLog.groupBy({
+      by: ['resourceType'],
+      where,
+      _count: { resourceType: true },
+      orderBy: { _count: { resourceType: 'desc' } },
+    }),
+    prisma.auditLog.groupBy({
+      by: ['action'],
+      where,
+      _count: { action: true },
+      orderBy: { _count: { action: 'desc' } },
+      take: 10,
+    }),
+  ]);
+
+  let total = 0;
+  let successCount = 0;
+  let failCount = 0;
+
+  totalLogs.forEach(item => {
+    const count = item._count.result;
+    total += count;
+    if (item.result === 'success') successCount = count;
+    if (item.result === 'fail') failCount = count;
+  });
+
+  const successRate = total > 0 ? Math.round((successCount / total) * 100) : 0;
+
+  const byActionMap = new Map<string, { action: string; count: number; successCount: number; failCount: number }>();
+  byActionRaw.forEach(item => {
+    const action = item.action;
+    const count = item._count.action;
+    if (!byActionMap.has(action)) {
+      byActionMap.set(action, { action, count: 0, successCount: 0, failCount: 0 });
+    }
+    const entry = byActionMap.get(action)!;
+    entry.count += count;
+    if (item.result === 'success') entry.successCount = count;
+    if (item.result === 'fail') entry.failCount = count;
+  });
+
+  const byAction = Array.from(byActionMap.values()).sort((a, b) => b.count - a.count);
+
+  const byResourceType = byResourceTypeRaw.map(item => ({
+    resourceType: item.resourceType,
+    count: item._count.resourceType,
+  }));
+
+  const topActions = topActionsRaw.map(item => ({
+    action: item.action,
+    count: item._count.action,
+  }));
+
+  successResponse(res, {
+    summary: {
+      total,
+      successCount,
+      failCount,
+      successRate,
+    },
+    byAction,
+    byResourceType,
+    topActions,
+  }, '获取审计统计成功');
+});
+
+const exportAuditLogsSchema = z.object({
+  action: z.string().optional(),
+  resourceType: z.string().optional(),
+  result: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+const generateChangeSummary = (details: any): string => {
+  if (!details) return '';
+  const { beforeData, afterData } = details;
+  if (!beforeData && !afterData) return '';
+
+  const changes: string[] = [];
+  const keys = new Set([
+    ...(beforeData ? Object.keys(beforeData) : []),
+    ...(afterData ? Object.keys(afterData) : []),
+  ]);
+
+  keys.forEach(key => {
+    const before = beforeData?.[key];
+    const after = afterData?.[key];
+    if (before !== undefined && after !== undefined && before !== after) {
+      changes.push(`${key}: ${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+    } else if (before !== undefined && after === undefined) {
+      changes.push(`${key}: 删除`);
+    } else if (before === undefined && after !== undefined) {
+      changes.push(`${key}: 新增 ${JSON.stringify(after)}`);
+    }
+  });
+
+  return changes.join('; ');
+};
+
+const escapeCsvField = (value: any): string => {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+export const exportAuditLogs = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const query = exportAuditLogsSchema.parse(req.query);
+
+  const where: any = {};
+  if (query.action) where.action = query.action;
+  if (query.resourceType) where.resourceType = query.resourceType;
+  if (query.result) where.result = query.result;
+  if (query.startDate || query.endDate) {
+    where.createdAt = {};
+    if (query.startDate) where.createdAt.gte = new Date(query.startDate as string);
+    if (query.endDate) {
+      const end = new Date(query.endDate as string);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt.lte = end;
+    }
+  }
+
+  const logs = await prisma.auditLog.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: 10000,
+  });
+
+  const headers = ['操作时间', '操作者', '请求路径', '动作', '资源类型', '资源ID', '结果', '变化摘要'];
+  const rows = logs.map(log => {
+    const details = fromJSON(log.details);
+    const operator = details?.operator || '';
+    const endpoint = details?.endpoint || '';
+    const changeSummary = generateChangeSummary(details);
+    return [
+      log.createdAt.toISOString(),
+      operator,
+      endpoint,
+      log.action,
+      log.resourceType,
+      log.resourceId || '',
+      log.result,
+      changeSummary,
+    ];
+  });
+
+  const csvContent = [
+    headers.map(escapeCsvField).join(','),
+    ...rows.map(row => row.map(escapeCsvField).join(',')),
+  ].join('\n');
+
+  const BOM = '\uFEFF';
+  const today = new Date();
+  const dateStr = today.getFullYear().toString() +
+    (today.getMonth() + 1).toString().padStart(2, '0') +
+    today.getDate().toString().padStart(2, '0');
+  const filename = `audit-logs-${dateStr}.csv`;
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+  res.send(BOM + csvContent);
 });

@@ -23,20 +23,67 @@ const addEntrySchema = z.object({
   title: z.string().min(1, '标题不能为空'),
   content: z.string().min(1, '内容不能为空'),
   source: z.string().optional(),
+  tags: z.array(z.string()).optional(),
   metadata: z.any().optional(),
+});
+
+const batchAddEntriesSchema = z.object({
+  entries: z.array(
+    z.object({
+      title: z.string().min(1, '标题不能为空'),
+      content: z.string().min(1, '内容不能为空'),
+      source: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      metadata: z.any().optional(),
+    })
+  ).min(1, '条目列表不能为空'),
+});
+
+const listEntriesSchema = z.object({
+  page: z.string().optional().default('1'),
+  pageSize: z.string().optional().default('20'),
+  source: z.string().optional(),
+  tags: z.string().optional(),
 });
 
 const searchSchema = z.object({
   query: z.string().min(1, '查询内容不能为空'),
   topK: z.string().optional().default('5'),
   includeAnswer: z.string().optional().default('false'),
+  source: z.string().optional(),
+  tags: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
 });
 
 const askSchema = z.object({
   query: z.string().min(1, '问题不能为空'),
   topK: z.number().optional().default(5),
   systemPrompt: z.string().optional(),
+  source: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
 });
+
+const parseTagsParam = (tagsStr: string | undefined): string[] | undefined => {
+  if (!tagsStr) return undefined;
+  try {
+    const parsed = JSON.parse(tagsStr);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(t => typeof t === 'string');
+    }
+  } catch {
+    return tagsStr.split(',').map(t => t.trim()).filter(t => t.length > 0);
+  }
+  return undefined;
+};
+
+const parseDateParam = (dateStr: string | undefined): Date | undefined => {
+  if (!dateStr) return undefined;
+  const date = new Date(dateStr);
+  return isNaN(date.getTime()) ? undefined : date;
+};
 
 export const createKnowledgeBase = asyncHandler(async (
   req: Request,
@@ -227,6 +274,7 @@ export const addEntry = asyncHandler(async (
       title: body.title,
       content: body.content,
       source: body.source,
+      tags: toJSON(body.tags),
       metadata: toJSON(body.metadata),
     },
   });
@@ -247,18 +295,18 @@ export const addEntry = asyncHandler(async (
     }
   );
 
-  const result = { ...entry, metadata: fromJSON(entry.metadata) };
+  const result = { ...entry, tags: fromJSON<string[]>(entry.tags), metadata: fromJSON(entry.metadata) };
   successResponse(res, result, '知识条目添加成功', 201);
 });
 
-export const listEntries = asyncHandler(async (
+export const batchAddEntries = asyncHandler(async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   const { id } = req.params;
   const apiKeyId = req.apiKey.id;
-  const { page = '1', pageSize = '20' } = req.query;
+  const body = batchAddEntriesSchema.parse(req.body);
 
   const knowledgeBase = await prisma.knowledgeBase.findFirst({
     where: { id, apiKeyId },
@@ -268,26 +316,108 @@ export const listEntries = asyncHandler(async (
     return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
   }
 
-  const pageNum = parseInt(page as string);
-  const pageSizeNum = parseInt(pageSize as string);
+  const createdEntries = await prisma.$transaction(async (tx) => {
+    const entries = [];
+    for (const item of body.entries) {
+      const entry = await tx.knowledgeEntry.create({
+        data: {
+          knowledgeBaseId: id,
+          title: item.title,
+          content: item.content,
+          source: item.source,
+          tags: toJSON(item.tags),
+          metadata: toJSON(item.metadata),
+        },
+      });
+      entries.push(entry);
+    }
+
+    await tx.knowledgeBase.update({
+      where: { id },
+      data: { docCount: { increment: entries.length } },
+    });
+
+    return entries;
+  });
+
+  await recordAuditLog(
+    apiKeyId,
+    'batch_add_knowledge_entries',
+    'knowledge_base',
+    id,
+    'success',
+    {
+      details: { knowledgeBaseId: id, count: createdEntries.length },
+    }
+  );
+
+  const result = createdEntries.map(entry => ({
+    ...entry,
+    tags: fromJSON<string[]>(entry.tags),
+    metadata: fromJSON(entry.metadata),
+  }));
+
+  successResponse(res, {
+    added: result.length,
+    entries: result,
+  }, '批量添加知识条目成功', 201);
+});
+
+export const listEntries = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const { id } = req.params;
+  const apiKeyId = req.apiKey.id;
+  const query = listEntriesSchema.parse(req.query);
+
+  const knowledgeBase = await prisma.knowledgeBase.findFirst({
+    where: { id, apiKeyId },
+  });
+
+  if (!knowledgeBase) {
+    return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
+  }
+
+  const pageNum = parseInt(query.page as string);
+  const pageSizeNum = parseInt(query.pageSize as string);
   const skip = (pageNum - 1) * pageSizeNum;
+
+  const where: any = { knowledgeBaseId: id };
+  if (query.source) {
+    where.source = query.source;
+  }
 
   const [entries, total] = await Promise.all([
     prisma.knowledgeEntry.findMany({
-      where: { knowledgeBaseId: id },
+      where,
       orderBy: { createdAt: 'desc' },
       skip,
       take: pageSizeNum,
     }),
-    prisma.knowledgeEntry.count({ where: { knowledgeBaseId: id } }),
+    prisma.knowledgeEntry.count({ where }),
   ]);
 
-  const result = entries.map(entry => ({
+  const tagsFilter = parseTagsParam(query.tags as string | undefined);
+  let filteredEntries = entries;
+  if (tagsFilter && tagsFilter.length > 0) {
+    filteredEntries = entries.filter(entry => {
+      if (!entry.tags) return false;
+      const entryTags = fromJSON<string[]>(entry.tags) || [];
+      return tagsFilter.every(tag => entryTags.includes(tag));
+    });
+  }
+
+  const result = filteredEntries.map(entry => ({
     ...entry,
+    tags: fromJSON<string[]>(entry.tags),
     metadata: fromJSON(entry.metadata),
   }));
 
-  paginatedResponse(res, result, total, pageNum, pageSizeNum, '获取知识条目成功');
+  const totalCount = tagsFilter && tagsFilter.length > 0 ? result.length : total;
+
+  paginatedResponse(res, result, totalCount, pageNum, pageSizeNum, '获取知识条目成功');
 });
 
 export const deleteEntry = asyncHandler(async (
@@ -350,12 +480,23 @@ export const searchKnowledge = asyncHandler(async (
   }
 
   const topK = parseInt(query.topK as string);
-  const results = await searchKnowledgeEntries(id, query.query, topK);
+  const tags = parseTagsParam(query.tags as string | undefined);
+  const startDate = parseDateParam(query.startDate as string | undefined);
+  const endDate = parseDateParam(query.endDate as string | undefined);
+
+  const results = await searchKnowledgeEntries(id, query.query, {
+    topK,
+    tags,
+    source: query.source,
+    startDate,
+    endDate,
+  });
 
   const formattedResults = results.map(r => ({
     id: r.id,
     title: r.title,
     source: r.source,
+    tags: r.tags,
     summary: r.summary,
     relevance: Math.round(r.relevance * 100) / 100,
     matchedFields: r.matchedFields,
@@ -396,7 +537,16 @@ export const askQuestion = asyncHandler(async (
     return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
   }
 
-  const searchResults = await searchKnowledgeEntries(id, body.query, body.topK || 5);
+  const startDate = parseDateParam(body.startDate);
+  const endDate = parseDateParam(body.endDate);
+
+  const searchResults = await searchKnowledgeEntries(id, body.query, {
+    topK: body.topK || 5,
+    tags: body.tags,
+    source: body.source,
+    startDate,
+    endDate,
+  });
   const { answer, citations } = await generateAnswer(body.query, searchResults);
 
   const formattedCitations = citations.map((r, i) => ({
@@ -404,6 +554,7 @@ export const askQuestion = asyncHandler(async (
     id: r.id,
     title: r.title,
     source: r.source,
+    tags: r.tags,
     summary: r.summary,
     relevance: Math.round(r.relevance * 100) / 100,
     matchedFields: r.matchedFields,

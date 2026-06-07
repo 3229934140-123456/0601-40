@@ -1,131 +1,195 @@
 import prisma from '../prisma';
+import { fromJSON } from '../utils/json';
 
 interface SearchResult {
   id: string;
   title: string;
   content: string;
   source: string | null;
+  tags: string[] | null;
   relevance: number;
   summary: string;
   matchedFields: string[];
+}
+
+interface SearchOptions {
+  topK?: number;
+  tags?: string[];
+  source?: string;
+  startDate?: Date;
+  endDate?: Date;
 }
 
 const escapeRegExp = (str: string): string => {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
-const highlightMatch = (text: string, query: string): string => {
-  const queryLower = query.toLowerCase();
+const highlightMatch = (text: string, keywords: string[]): string => {
   const textLower = text.toLowerCase();
-  const index = textLower.indexOf(queryLower);
-  
-  if (index === -1) return text;
-  
-  const beforeIndex = Math.max(0, index - 30);
-  const afterIndex = Math.min(text.length, index + query.length + 30);
-  
+  let bestIndex = -1;
+  let bestKeyword = '';
+
+  for (const keyword of keywords) {
+    const keywordLower = keyword.toLowerCase();
+    const index = textLower.indexOf(keywordLower);
+    if (index !== -1 && (bestIndex === -1 || index < bestIndex)) {
+      bestIndex = index;
+      bestKeyword = keyword;
+    }
+  }
+
+  if (bestIndex === -1) return text.substring(0, 150) + (text.length > 150 ? '...' : '');
+
+  const beforeIndex = Math.max(0, bestIndex - 30);
+  const afterIndex = Math.min(text.length, bestIndex + bestKeyword.length + 30);
+
   let result = '';
   if (beforeIndex > 0) result += '...';
-  result += text.substring(beforeIndex, afterIndex);
+  result += text.substring(bestIndex, afterIndex);
   if (afterIndex < text.length) result += '...';
-  
+
   return result;
 };
 
-const generateSummary = (title: string, content: string, source: string | null, query: string): string => {
-  const queryLower = query.toLowerCase();
-  const titleLower = title.toLowerCase();
+const generateSummary = (title: string, content: string, source: string | null, keywords: string[]): string => {
   const contentLower = content.toLowerCase();
+  const titleLower = title.toLowerCase();
   const sourceLower = source?.toLowerCase() || '';
 
-  if (contentLower.includes(queryLower)) {
-    return highlightMatch(content, query);
+  const hasContentMatch = keywords.some(kw => contentLower.includes(kw.toLowerCase()));
+  const hasTitleMatch = keywords.some(kw => titleLower.includes(kw.toLowerCase()));
+  const hasSourceMatch = keywords.some(kw => sourceLower.includes(kw.toLowerCase()));
+
+  if (hasContentMatch) {
+    return highlightMatch(content, keywords);
   }
 
-  if (titleLower.includes(queryLower)) {
-    return highlightMatch(title, query) + (content.length > 0 ? ' - ' + content.substring(0, 100) + '...' : '');
+  if (hasTitleMatch) {
+    return highlightMatch(title, keywords) + (content.length > 0 ? ' - ' + content.substring(0, 100) + '...' : '');
   }
 
-  if (sourceLower.includes(queryLower)) {
+  if (hasSourceMatch && source) {
     return `来源匹配：${source}${content.length > 0 ? ' - ' + content.substring(0, 100) + '...' : ''}`;
   }
 
   return content.substring(0, 150) + (content.length > 150 ? '...' : '');
 };
 
-const getMatchedFields = (title: string, content: string, source: string | null, query: string): string[] => {
-  const queryLower = query.toLowerCase();
+const getMatchedFields = (title: string, content: string, source: string | null, keywords: string[]): string[] => {
   const fields: string[] = [];
+  const titleLower = title.toLowerCase();
+  const contentLower = content.toLowerCase();
+  const sourceLower = source?.toLowerCase() || '';
 
-  if (title.toLowerCase().includes(queryLower)) {
+  if (keywords.some(kw => titleLower.includes(kw.toLowerCase()))) {
     fields.push('title');
   }
-  if (content.toLowerCase().includes(queryLower)) {
+  if (keywords.some(kw => contentLower.includes(kw.toLowerCase()))) {
     fields.push('content');
   }
-  if (source && source.toLowerCase().includes(queryLower)) {
+  if (source && keywords.some(kw => sourceLower.includes(kw.toLowerCase()))) {
     fields.push('source');
   }
 
   return fields;
 };
 
-const calculateRelevance = (query: string, title: string, content: string, source: string | null): number => {
-  const queryLower = query.toLowerCase();
+const calculateRelevance = (
+  title: string,
+  content: string,
+  source: string | null,
+  keywords: string[]
+): number => {
+  if (keywords.length === 0) return 0;
+
   const titleLower = title.toLowerCase();
   const contentLower = content.toLowerCase();
   const sourceLower = source?.toLowerCase() || '';
 
+  let hitCount = 0;
   let score = 0;
-  let hasMatch = false;
 
-  if (titleLower.includes(queryLower)) {
-    score += 50;
-    hasMatch = true;
+  for (const keyword of keywords) {
+    const kw = keyword.toLowerCase();
+    let keywordHit = false;
+
+    if (titleLower.includes(kw)) {
+      score += 50;
+      keywordHit = true;
+    }
+
+    if (contentLower.includes(kw)) {
+      score += 30;
+      keywordHit = true;
+    }
+
+    if (sourceLower.includes(kw)) {
+      score += 20;
+      keywordHit = true;
+    }
+
+    if (keywordHit) {
+      hitCount++;
+    }
   }
 
-  if (contentLower.includes(queryLower)) {
-    score += 30;
-    hasMatch = true;
-  }
-
-  if (sourceLower.includes(queryLower)) {
-    score += 20;
-    hasMatch = true;
-  }
-
-  if (!hasMatch) {
+  if (hitCount === 0) {
     return 0;
   }
 
-  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 1);
-  for (const word of queryWords) {
-    if (titleLower.includes(word)) score += 10;
-    if (contentLower.includes(word)) score += 5;
-    if (sourceLower.includes(word)) score += 5;
-  }
+  const titleHitCount = keywords.reduce((count, kw) => {
+    const matches = titleLower.match(new RegExp(escapeRegExp(kw.toLowerCase()), 'gi'));
+    return count + (matches ? matches.length : 0);
+  }, 0);
+  score += titleHitCount * 5;
 
-  const titleCount = (titleLower.match(new RegExp(escapeRegExp(queryLower), 'gi')) || []).length;
-  score += titleCount * 5;
+  const contentHitCount = keywords.reduce((count, kw) => {
+    const matches = contentLower.match(new RegExp(escapeRegExp(kw.toLowerCase()), 'gi'));
+    return count + (matches ? matches.length : 0);
+  }, 0);
+  score += Math.min(contentHitCount * 2, 20);
 
-  const contentCount = (contentLower.match(new RegExp(escapeRegExp(queryLower), 'gi')) || []).length;
-  score += Math.min(contentCount * 2, 20);
+  const hitRatio = hitCount / keywords.length;
+  score = score * (0.5 + hitRatio * 0.5);
 
   return Math.min(score, 100) / 100;
+};
+
+const splitKeywords = (query: string): string[] => {
+  return query.split(/\s+/).filter(w => w.length > 0);
 };
 
 export const searchKnowledgeEntries = async (
   knowledgeBaseId: string,
   query: string,
-  topK: number = 5
+  options?: SearchOptions
 ): Promise<SearchResult[]> => {
+  const topK = options?.topK ?? 5;
+
+  const where: any = { knowledgeBaseId };
+
+  if (options?.source) {
+    where.source = options.source;
+  }
+
+  if (options?.startDate || options?.endDate) {
+    where.createdAt = {};
+    if (options.startDate) {
+      where.createdAt.gte = options.startDate;
+    }
+    if (options.endDate) {
+      where.createdAt.lte = options.endDate;
+    }
+  }
+
   const entries = await prisma.knowledgeEntry.findMany({
-    where: { knowledgeBaseId },
+    where,
     select: {
       id: true,
       title: true,
       content: true,
       source: true,
+      tags: true,
     },
   });
 
@@ -133,17 +197,34 @@ export const searchKnowledgeEntries = async (
     return [];
   }
 
-  const results: SearchResult[] = entries
+  const keywords = splitKeywords(query);
+
+  let filteredEntries = entries;
+  if (options?.tags && options.tags.length > 0) {
+    filteredEntries = entries.filter(entry => {
+      if (!entry.tags) return false;
+      const entryTags = fromJSON<string[]>(entry.tags) || [];
+      return options.tags!.every(tag => entryTags.includes(tag));
+    });
+  }
+
+  if (filteredEntries.length === 0) {
+    return [];
+  }
+
+  const results: SearchResult[] = filteredEntries
     .map(entry => {
-      const relevance = calculateRelevance(query, entry.title, entry.content, entry.source);
-      const matchedFields = getMatchedFields(entry.title, entry.content, entry.source, query);
-      const summary = generateSummary(entry.title, entry.content, entry.source, query);
-      
+      const relevance = calculateRelevance(entry.title, entry.content, entry.source, keywords);
+      const matchedFields = getMatchedFields(entry.title, entry.content, entry.source, keywords);
+      const summary = generateSummary(entry.title, entry.content, entry.source, keywords);
+      const tags = fromJSON<string[]>(entry.tags) || null;
+
       return {
         id: entry.id,
         title: entry.title,
         content: entry.content,
         source: entry.source,
+        tags,
         relevance,
         summary,
         matchedFields,

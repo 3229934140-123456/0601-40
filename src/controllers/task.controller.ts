@@ -31,6 +31,18 @@ const retryTaskSchema = z.object({
   maxRetries: z.number().optional(),
 });
 
+const formatTaskRun = (run: any) => {
+  if (!run) return run;
+  const formatted = { ...run };
+  if (formatted.inputData !== null && formatted.inputData !== undefined) {
+    formatted.inputData = fromJSON(formatted.inputData);
+  }
+  if (formatted.outputData !== null && formatted.outputData !== undefined) {
+    formatted.outputData = fromJSON(formatted.outputData);
+  }
+  return formatted;
+};
+
 const formatTask = (task: any) => {
   if (!task) return task;
   const formatted = { ...task };
@@ -40,7 +52,59 @@ const formatTask = (task: any) => {
   if (formatted.outputData !== null && formatted.outputData !== undefined) {
     formatted.outputData = fromJSON(formatted.outputData);
   }
+  if (formatted.taskRuns && Array.isArray(formatted.taskRuns)) {
+    formatted.taskRuns = formatted.taskRuns.map(formatTaskRun);
+  }
   return formatted;
+};
+
+const buildTimeline = (task: any): Array<{ event: string; timestamp: Date; details?: any }> => {
+  const timeline: Array<{ event: string; timestamp: Date; details?: any }> = [];
+
+  if (task.createdAt) {
+    timeline.push({ event: 'created', timestamp: task.createdAt });
+  }
+
+  if (task.taskRuns && Array.isArray(task.taskRuns)) {
+    const sortedRuns = [...task.taskRuns].sort((a, b) => a.runIndex - b.runIndex);
+    for (const run of sortedRuns) {
+      if (run.startedAt) {
+        const details: any = { runIndex: run.runIndex, source: run.source };
+        timeline.push({ event: 'started', timestamp: run.startedAt, details });
+      }
+      if (run.status === 'completed' && run.completedAt) {
+        timeline.push({ event: 'completed', timestamp: run.completedAt, details: { runIndex: run.runIndex } });
+      }
+      if (run.status === 'failed' && run.completedAt) {
+        timeline.push({
+          event: 'failed',
+          timestamp: run.completedAt,
+          details: { runIndex: run.runIndex, errorMessage: run.errorMessage },
+        });
+      }
+      if (run.status === 'cancelled' && run.completedAt) {
+        timeline.push({ event: 'cancelled', timestamp: run.completedAt, details: { runIndex: run.runIndex } });
+      }
+      if (run.source === 'auto_retry' && run.startedAt) {
+        timeline.push({ event: 'retried', timestamp: run.startedAt, details: { runIndex: run.runIndex, source: 'auto' } });
+      }
+      if (run.source === 'manual_retry' && run.startedAt) {
+        timeline.push({ event: 'retried', timestamp: run.startedAt, details: { runIndex: run.runIndex, source: 'manual' } });
+      }
+    }
+  }
+
+  if (task.cancelledAt && !timeline.find(t => t.event === 'cancelled')) {
+    timeline.push({
+      event: 'cancelled',
+      timestamp: task.cancelledAt,
+      details: { cancelledBy: task.cancelledBy },
+    });
+  }
+
+  timeline.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  return timeline;
 };
 
 const formatTasks = (tasks: any[]) => {
@@ -152,8 +216,7 @@ export const getTask = asyncHandler(async (
     where: { id, apiKeyId },
     include: {
       taskRuns: {
-        orderBy: { runIndex: 'desc' },
-        take: 5,
+        orderBy: { runIndex: 'asc' },
       },
     },
   });
@@ -165,10 +228,12 @@ export const getTask = asyncHandler(async (
   const running = isTaskRunning(task.id);
 
   const formattedTask = formatTask(task);
+  const timeline = buildTimeline(task);
 
   successResponse(res, {
     ...formattedTask,
     isRunning: running,
+    timeline,
   }, '获取任务详情成功');
 });
 
@@ -182,17 +247,19 @@ export const getTaskProgress = asyncHandler(async (
 
   const task = await prisma.task.findFirst({
     where: { id, apiKeyId },
-    select: {
-      id: true,
-      taskId: true,
-      type: true,
-      status: true,
-      progress: true,
-      createdAt: true,
-      startedAt: true,
-      completedAt: true,
-      errorMessage: true,
-      retryCount: true,
+    include: {
+      taskRuns: {
+        orderBy: { runIndex: 'asc' },
+        select: {
+          id: true,
+          runIndex: true,
+          status: true,
+          source: true,
+          startedAt: true,
+          completedAt: true,
+          errorMessage: true,
+        },
+      },
     },
   });
 
@@ -211,10 +278,23 @@ export const getTaskProgress = asyncHandler(async (
     };
   }
 
+  const timeline = buildTimeline(task);
+
   successResponse(res, {
-    ...task,
+    id: task.id,
+    taskId: task.taskId,
+    type: task.type,
+    status: task.status,
+    progress: task.progress,
+    createdAt: task.createdAt,
+    startedAt: task.startedAt,
+    completedAt: task.completedAt,
+    errorMessage: task.errorMessage,
+    retryCount: task.retryCount,
     isRunning: running,
     errorInfo,
+    taskRuns: task.taskRuns,
+    timeline,
   }, '获取任务进度成功');
 });
 
@@ -238,7 +318,7 @@ export const cancelTaskHandler = asyncHandler(async (
     return next(new AppError(400, 'TASK_FINISHED', '任务已完成或已取消', '无法取消已结束的任务'));
   }
 
-  const result = await cancelTask(task.id);
+  const result = await cancelTask(task.id, 'user');
 
   if (!result.success) {
     return next(new AppError(400, 'CANCEL_FAILED', `任务取消失败，当前状态：${result.status}`, '请稍后重试'));
@@ -294,7 +374,7 @@ export const retryTask = asyncHandler(async (
     },
   });
 
-  setImmediate(() => processTask(task.id));
+  setImmediate(() => processTask(task.id, 'manual_retry'));
 
   await recordAuditLog(
     apiKeyId,
