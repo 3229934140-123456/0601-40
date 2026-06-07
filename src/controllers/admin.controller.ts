@@ -606,26 +606,8 @@ export const getErrorDetail = asyncHandler(async (
     return next(new AppError(404, 'ERROR_NOT_FOUND', '错误记录不存在', '请检查 ID 是否正确'));
   }
 
-  const retrySuggestions: Record<string, string> = {
-    VALIDATION_ERROR: '请检查请求参数是否符合接口文档要求，确保所有必填参数已提供且格式正确。',
-    AUTH_API_KEY_MISSING: '请在请求头中添加 x-api-key 参数，并确保值为有效的 API Key。',
-    AUTH_API_KEY_INVALID: '请检查 API Key 和 App ID 是否正确，或联系管理员确认密钥状态。',
-    QUOTA_EXCEEDED: '当前配额已用完，请升级套餐或等待下个周期重置，也可以申请临时额度提升。',
-    SESSION_NOT_FOUND: '请检查 sessionId 是否正确，或创建新的会话后重试。',
-    TASK_NOT_FOUND: '请检查任务 ID 是否正确。',
-    TASK_FINISHED: '任务已完成或已取消，无法执行此操作。',
-    DOCUMENT_NOT_FOUND: '请检查文档 ID 是否正确。',
-    DOCUMENT_NOT_READY: '文档尚未解析完成，请稍后再试。',
-    KNOWLEDGE_BASE_NOT_FOUND: '请检查知识库 ID 是否正确。',
-    RATE_LIMIT_EXCEEDED: '请求过于频繁，请降低请求频率后重试。',
-    INTERNAL_SERVER_ERROR: '服务器内部错误，请稍后重试，如持续出现请联系技术支持。',
-  };
-
-  const suggestion = error.retrySuggestion || retrySuggestions[error.errorCode] || '请稍后重试，如问题持续请联系技术支持。';
-
   successResponse(res, {
     ...error,
     metadata: fromJSON(error.metadata),
-    retrySuggestion: suggestion,
   }, '获取错误详情成功');
 });

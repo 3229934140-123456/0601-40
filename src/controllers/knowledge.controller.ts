@@ -3,7 +3,7 @@ import { z } from 'zod';
 import prisma from '../prisma';
 import { successResponse, paginatedResponse } from '../utils/response';
 import { AppError, asyncHandler } from '../middleware/error.middleware';
-import { simulateKnowledgeSearch, simulateChatCompletion } from '../services/ai.service';
+import { searchKnowledgeEntries, generateAnswer } from '../services/knowledge.service';
 import { recordUsage, recordAuditLog } from '../services/monitoring.service';
 import { toJSON, fromJSON } from '../utils/json';
 
@@ -345,10 +345,16 @@ export const searchKnowledge = asyncHandler(async (
     return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
   }
 
-  const results = await simulateKnowledgeSearch(query.query, id);
-
   const topK = parseInt(query.topK as string);
-  const topResults = results.slice(0, topK);
+  const results = await searchKnowledgeEntries(id, query.query, topK);
+
+  const formattedResults = results.map(r => ({
+    id: r.id,
+    title: r.title,
+    source: r.source,
+    content: r.content.substring(0, 200) + (r.content.length > 200 ? '...' : ''),
+    relevance: Math.round(r.relevance * 100) / 100,
+  }));
 
   await recordUsage(apiKeyId, 'knowledge_search', 1, query.query.length);
 
@@ -358,13 +364,13 @@ export const searchKnowledge = asyncHandler(async (
     'knowledge_base',
     id,
     'success',
-    { query: query.query, resultCount: topResults.length }
+    { query: query.query, resultCount: formattedResults.length }
   );
 
   successResponse(res, {
     query: query.query,
-    results: topResults,
-    total: topResults.length,
+    results: formattedResults,
+    total: formattedResults.length,
   }, '知识检索成功');
 });
 
@@ -385,34 +391,22 @@ export const askQuestion = asyncHandler(async (
     return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
   }
 
-  const searchResults = await simulateKnowledgeSearch(body.query, id);
-  const topResults = searchResults.slice(0, body.topK || 5);
+  const searchResults = await searchKnowledgeEntries(id, body.query, body.topK || 5);
+  const { answer, citations } = await generateAnswer(body.query, searchResults);
 
-  const context = topResults.map((r, i) =>
-    `[${i + 1}] ${r.title}\n${r.content}\n来源：${r.source || '未知'}`
-  ).join('\n\n');
-
-  const systemPrompt = body.systemPrompt || `你是一个专业的知识问答助手。请根据以下参考资料回答用户的问题。
-如果参考资料中没有相关信息，请明确告知用户。回答时请在结尾标注引用来源。
-
-参考资料：
-${context}`;
-
-  const aiResponse = await simulateChatCompletion(
-    [{ role: 'user', content: body.query }],
-    systemPrompt
-  );
-
-  const citations = topResults.map((r, i) => ({
+  const formattedCitations = citations.map((r, i) => ({
     index: i + 1,
+    id: r.id,
     title: r.title,
     source: r.source,
-    content: r.content.substring(0, 200),
-    relevance: r.relevance,
-    pageNumber: r.pageNumber,
+    content: r.content.substring(0, 200) + (r.content.length > 200 ? '...' : ''),
+    relevance: Math.round(r.relevance * 100) / 100,
   }));
 
-  await recordUsage(apiKeyId, 'knowledge_qa', 1, aiResponse.tokens);
+  const references = formattedCitations.map(c => c.source).filter(Boolean);
+  const tokens = answer.length + body.query.length;
+
+  await recordUsage(apiKeyId, 'knowledge_qa', 1, tokens);
 
   await recordAuditLog(
     apiKeyId,
@@ -420,16 +414,17 @@ ${context}`;
     'knowledge_base',
     id,
     'success',
-    { query: body.query }
+    { query: body.query, hitCount: citations.length }
   );
 
   successResponse(res, {
-    answer: aiResponse.content,
+    answer,
     query: body.query,
-    citations,
-    references: citations.map(c => c.source),
+    citations: formattedCitations,
+    references,
+    hasAnswer: citations.length > 0,
     usage: {
-      tokens: aiResponse.tokens,
+      tokens,
     },
   }, '问答成功');
 });

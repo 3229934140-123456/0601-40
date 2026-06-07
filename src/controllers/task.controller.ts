@@ -232,17 +232,14 @@ export const cancelTaskHandler = asyncHandler(async (
     return next(new AppError(404, 'TASK_NOT_FOUND', '任务不存在', '请检查任务 ID 是否正确'));
   }
 
-  if (task.status === 'completed' || task.status === 'cancelled') {
-    return next(new AppError(400, 'TASK_FINISHED', '任务已完成或已取消', '无法取消已完成的任务'));
+  if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'failed') {
+    return next(new AppError(400, 'TASK_FINISHED', '任务已完成或已取消', '无法取消已结束的任务'));
   }
 
-  const cancelled = cancelTask(task.id);
+  const result = await cancelTask(task.id);
 
-  if (!cancelled && task.status === 'pending') {
-    await prisma.task.update({
-      where: { id: task.id },
-      data: { status: 'cancelled' },
-    });
+  if (!result.success) {
+    return next(new AppError(400, 'CANCEL_FAILED', `任务取消失败，当前状态：${result.status}`, '请稍后重试'));
   }
 
   await recordAuditLog(

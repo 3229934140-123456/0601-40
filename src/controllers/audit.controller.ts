@@ -3,7 +3,7 @@ import { z } from 'zod';
 import prisma from '../prisma';
 import { successResponse, paginatedResponse } from '../utils/response';
 import { AppError, asyncHandler } from '../middleware/error.middleware';
-import { simulateSensitiveCheck } from '../services/ai.service';
+import { checkSensitive, invalidateWordCache } from '../services/audit.service';
 import { recordAuditLog } from '../services/monitoring.service';
 
 const checkTextSchema = z.object({
@@ -36,15 +36,12 @@ export const checkText = asyncHandler(async (
   const body = checkTextSchema.parse(req.body);
   const apiKeyId = req.apiKey.id;
 
-  const result = await simulateSensitiveCheck(body.text);
+  const result = await checkSensitive(body.text, {
+    categories: body.categories,
+    censor: body.censor,
+  });
 
-  let matchedWords = result.matchedWords;
-
-  if (body.categories && body.categories.length > 0) {
-    matchedWords = matchedWords.filter(w => body.categories!.includes(w.category));
-  }
-
-  const passed = matchedWords.length === 0;
+  const passed = result.passed;
 
   await recordAuditLog(
     apiKeyId,
@@ -54,20 +51,20 @@ export const checkText = asyncHandler(async (
     passed ? 'passed' : 'blocked',
     {
       textLength: body.text.length,
-      matchedCount: matchedWords.length,
-      matchedWords: matchedWords.map(w => w.word),
+      matchedCount: result.matchedWords.length,
+      matchedWords: result.matchedWords.map(w => w.word),
     }
   );
 
   successResponse(res, {
     passed,
-    matchedWords,
-    censoredText: body.censor ? result.censoredText : undefined,
+    matchedWords: result.matchedWords,
+    censoredText: result.censoredText,
     stats: {
-      totalMatched: matchedWords.length,
-      highSeverity: matchedWords.filter(w => w.severity === 'high').length,
-      mediumSeverity: matchedWords.filter(w => w.severity === 'medium').length,
-      lowSeverity: matchedWords.filter(w => w.severity === 'low').length,
+      totalMatched: result.matchedWords.length,
+      highSeverity: result.matchedWords.filter(w => w.severity === 'high').length,
+      mediumSeverity: result.matchedWords.filter(w => w.severity === 'medium').length,
+      lowSeverity: result.matchedWords.filter(w => w.severity === 'low').length,
     },
   }, '内容审核完成');
 });
@@ -96,6 +93,8 @@ export const addSensitiveWord = asyncHandler(async (
       enabled: body.enabled,
     },
   });
+
+  invalidateWordCache();
 
   successResponse(res, word, '敏感词添加成功', 201);
 });
@@ -156,6 +155,8 @@ export const updateSensitiveWord = asyncHandler(async (
     },
   });
 
+  invalidateWordCache();
+
   successResponse(res, updated, '敏感词更新成功');
 });
 
@@ -175,6 +176,8 @@ export const deleteSensitiveWord = asyncHandler(async (
   }
 
   await prisma.sensitiveWord.delete({ where: { id } });
+
+  invalidateWordCache();
 
   successResponse(res, null, '敏感词删除成功');
 });
@@ -241,4 +244,8 @@ export const batchAddWords = asyncHandler(async (
     failed: failed.length,
     failedItems: failed,
   }, '批量添加完成');
+
+  if (created.length > 0) {
+    invalidateWordCache();
+  }
 });

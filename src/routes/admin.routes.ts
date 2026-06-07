@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { apiKeyAuth } from '../middleware/auth.middleware';
+import { apiKeyAuth, adminAuth } from '../middleware/auth.middleware';
 import {
   createApiKey,
   listApiKeys,
@@ -23,12 +23,16 @@ import {
 
 const router = Router();
 
+// 公开接口 - 模板只读
 router.get('/templates', listTemplates);
 router.get('/templates/code/:code', getTemplateByCode);
 router.get('/templates/:id', getTemplate);
 
+// 业务接口 - 需要业务 API Key
 router.post('/feedback', apiKeyAuth, submitFeedback);
 
+// 管理员接口 - 需要管理员令牌
+router.use('/api-keys', adminAuth);
 router.get('/api-keys', listApiKeys);
 router.post('/api-keys', createApiKey);
 router.get('/api-keys/:id', getApiKey);
@@ -37,14 +41,14 @@ router.delete('/api-keys/:id', deleteApiKey);
 router.post('/api-keys/:id/quota', updateQuota);
 router.post('/api-keys/:id/reset-quota', resetQuota);
 
-router.post('/templates', createTemplate);
-router.put('/templates/:id', updateTemplate);
-router.delete('/templates/:id', deleteTemplate);
+router.post('/templates', adminAuth, createTemplate);
+router.put('/templates/:id', adminAuth, updateTemplate);
+router.delete('/templates/:id', adminAuth, deleteTemplate);
 
-router.get('/feedback', listFeedbacks);
+router.get('/feedback', adminAuth, listFeedbacks);
 
-router.get('/errors', listErrors);
-router.get('/errors/stats', getErrorStats);
-router.get('/errors/:id', getErrorDetail);
+router.get('/errors', adminAuth, listErrors);
+router.get('/errors/stats', adminAuth, getErrorStats);
+router.get('/errors/:id', adminAuth, getErrorDetail);
 
 export default router;
