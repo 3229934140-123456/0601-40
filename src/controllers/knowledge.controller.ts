@@ -268,20 +268,37 @@ export const addEntry = asyncHandler(async (
     return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
   }
 
-  const entry = await prisma.knowledgeEntry.create({
-    data: {
-      knowledgeBaseId: id,
-      title: body.title,
-      content: body.content,
-      source: body.source,
-      tags: toJSON(body.tags),
-      metadata: toJSON(body.metadata),
-    },
-  });
+  const entry = await prisma.$transaction(async (tx) => {
+    const newEntry = await tx.knowledgeEntry.create({
+      data: {
+        knowledgeBaseId: id,
+        title: body.title,
+        content: body.content,
+        source: body.source,
+        tags: toJSON(body.tags),
+        metadata: toJSON(body.metadata),
+      },
+    });
 
-  await prisma.knowledgeBase.update({
-    where: { id },
-    data: { docCount: { increment: 1 } },
+    await tx.knowledgeEntryVersion.create({
+      data: {
+        entryId: newEntry.id,
+        version: 1,
+        title: body.title,
+        content: body.content,
+        source: body.source,
+        tags: toJSON(body.tags),
+        changeSummary: '初始版本',
+        metadata: toJSON(body.metadata),
+      },
+    });
+
+    await tx.knowledgeBase.update({
+      where: { id },
+      data: { docCount: { increment: 1 } },
+    });
+
+    return newEntry;
   });
 
   await recordAuditLog(
@@ -410,9 +427,16 @@ export const listEntries = asyncHandler(async (
   }
 
   const result = filteredEntries.map(entry => ({
-    ...entry,
+    id: entry.id,
+    knowledgeBaseId: entry.knowledgeBaseId,
+    title: entry.title,
+    content: entry.content,
+    source: entry.source,
     tags: fromJSON<string[]>(entry.tags),
+    version: entry.version,
     metadata: fromJSON(entry.metadata),
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
   }));
 
   const totalCount = tagsFilter && tagsFilter.length > 0 ? result.length : total;
@@ -497,6 +521,7 @@ export const searchKnowledge = asyncHandler(async (
     title: r.title,
     source: r.source,
     tags: r.tags,
+    version: r.version,
     summary: r.summary,
     relevance: Math.round(r.relevance * 100) / 100,
     matchedFields: r.matchedFields,
@@ -555,6 +580,7 @@ export const askQuestion = asyncHandler(async (
     title: r.title,
     source: r.source,
     tags: r.tags,
+    version: r.version,
     summary: r.summary,
     relevance: Math.round(r.relevance * 100) / 100,
     matchedFields: r.matchedFields,
@@ -584,4 +610,241 @@ export const askQuestion = asyncHandler(async (
       tokens,
     },
   }, '问答成功');
+});
+
+const updateEntrySchema = z.object({
+  title: z.string().min(1, '标题不能为空').optional(),
+  content: z.string().min(1, '内容不能为空').optional(),
+  source: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+const arraysEqual = (a: string[] | null | undefined, b: string[] | null | undefined): boolean => {
+  const arr1 = a || [];
+  const arr2 = b || [];
+  if (arr1.length !== arr2.length) return false;
+  const sorted1 = [...arr1].sort();
+  const sorted2 = [...arr2].sort();
+  return sorted1.every((val, idx) => val === sorted2[idx]);
+};
+
+const calculateChangeSummary = (
+  oldTitle: string,
+  newTitle: string | undefined,
+  oldContent: string,
+  newContent: string | undefined,
+  oldSource: string | null,
+  newSource: string | undefined,
+  oldTags: string[] | null,
+  newTags: string[] | undefined
+): string => {
+  const changedFields: string[] = [];
+
+  if (newTitle !== undefined && newTitle !== oldTitle) {
+    changedFields.push('title');
+  }
+  if (newContent !== undefined && newContent !== oldContent) {
+    changedFields.push('content');
+  }
+  if (newSource !== undefined && newSource !== oldSource) {
+    changedFields.push('source');
+  }
+  if (newTags !== undefined && !arraysEqual(oldTags, newTags)) {
+    changedFields.push('tags');
+  }
+
+  return changedFields.join(', ');
+};
+
+export const updateEntry = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const { id, entryId } = req.params;
+  const apiKeyId = req.apiKey.id;
+  const body = updateEntrySchema.parse(req.body);
+
+  const knowledgeBase = await prisma.knowledgeBase.findFirst({
+    where: { id, apiKeyId },
+  });
+
+  if (!knowledgeBase) {
+    return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
+  }
+
+  const entry = await prisma.knowledgeEntry.findFirst({
+    where: { id: entryId, knowledgeBaseId: id },
+  });
+
+  if (!entry) {
+    return next(new AppError(404, 'KNOWLEDGE_ENTRY_NOT_FOUND', '知识条目不存在', '请检查条目 ID 是否正确'));
+  }
+
+  const oldTags = fromJSON<string[]>(entry.tags);
+  const changeSummary = calculateChangeSummary(
+    entry.title,
+    body.title,
+    entry.content,
+    body.content,
+    entry.source,
+    body.source,
+    oldTags,
+    body.tags
+  );
+
+  if (!changeSummary) {
+    const result = {
+      ...entry,
+      tags: oldTags,
+      metadata: fromJSON(entry.metadata),
+    };
+    return successResponse(res, result, '条目未修改');
+  }
+
+  const newVersion = entry.version + 1;
+  const updatedTitle = body.title !== undefined ? body.title : entry.title;
+  const updatedContent = body.content !== undefined ? body.content : entry.content;
+  const updatedSource = body.source !== undefined ? body.source : entry.source;
+  const updatedTags = body.tags !== undefined ? toJSON(body.tags) : entry.tags;
+
+  const updatedEntry = await prisma.$transaction(async (tx) => {
+    const updated = await tx.knowledgeEntry.update({
+      where: { id: entryId },
+      data: {
+        title: updatedTitle,
+        content: updatedContent,
+        source: updatedSource,
+        tags: updatedTags,
+        version: newVersion,
+      },
+    });
+
+    await tx.knowledgeEntryVersion.create({
+      data: {
+        entryId: entryId,
+        version: newVersion,
+        title: updatedTitle,
+        content: updatedContent,
+        source: updatedSource,
+        tags: updatedTags,
+        changeSummary,
+        metadata: entry.metadata,
+      },
+    });
+
+    return updated;
+  });
+
+  await recordAuditLog(
+    apiKeyId,
+    'update_knowledge_entry',
+    'knowledge_entry',
+    entryId,
+    'success',
+    {
+      details: { knowledgeBaseId: id, version: newVersion, changed: changeSummary },
+    }
+  );
+
+  const result = {
+    ...updatedEntry,
+    tags: fromJSON<string[]>(updatedEntry.tags),
+    metadata: fromJSON(updatedEntry.metadata),
+  };
+  successResponse(res, result, '知识条目更新成功');
+});
+
+export const listEntryVersions = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const { id, entryId } = req.params;
+  const apiKeyId = req.apiKey.id;
+
+  const knowledgeBase = await prisma.knowledgeBase.findFirst({
+    where: { id, apiKeyId },
+  });
+
+  if (!knowledgeBase) {
+    return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
+  }
+
+  const entry = await prisma.knowledgeEntry.findFirst({
+    where: { id: entryId, knowledgeBaseId: id },
+  });
+
+  if (!entry) {
+    return next(new AppError(404, 'KNOWLEDGE_ENTRY_NOT_FOUND', '知识条目不存在', '请检查条目 ID 是否正确'));
+  }
+
+  const versions = await prisma.knowledgeEntryVersion.findMany({
+    where: { entryId },
+    orderBy: { version: 'desc' },
+  });
+
+  const result = versions.map(v => ({
+    version: v.version,
+    title: v.title,
+    source: v.source,
+    tags: fromJSON<string[]>(v.tags),
+    changeSummary: v.changeSummary,
+    createdAt: v.createdAt,
+  }));
+
+  successResponse(res, result, '获取版本历史成功');
+});
+
+export const getEntryVersion = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const { id, entryId, version } = req.params;
+  const apiKeyId = req.apiKey.id;
+
+  const knowledgeBase = await prisma.knowledgeBase.findFirst({
+    where: { id, apiKeyId },
+  });
+
+  if (!knowledgeBase) {
+    return next(new AppError(404, 'KNOWLEDGE_BASE_NOT_FOUND', '知识库不存在', '请检查知识库 ID 是否正确'));
+  }
+
+  const entry = await prisma.knowledgeEntry.findFirst({
+    where: { id: entryId, knowledgeBaseId: id },
+  });
+
+  if (!entry) {
+    return next(new AppError(404, 'KNOWLEDGE_ENTRY_NOT_FOUND', '知识条目不存在', '请检查条目 ID 是否正确'));
+  }
+
+  const versionNum = parseInt(version);
+  if (isNaN(versionNum)) {
+    return next(new AppError(400, 'INVALID_VERSION', '版本号无效', '版本号必须是数字'));
+  }
+
+  const versionRecord = await prisma.knowledgeEntryVersion.findFirst({
+    where: { entryId, version: versionNum },
+  });
+
+  if (!versionRecord) {
+    return next(new AppError(404, 'VERSION_NOT_FOUND', '版本不存在', '请检查版本号是否正确'));
+  }
+
+  const result = {
+    id: versionRecord.id,
+    entryId: versionRecord.entryId,
+    version: versionRecord.version,
+    title: versionRecord.title,
+    content: versionRecord.content,
+    source: versionRecord.source,
+    tags: fromJSON<string[]>(versionRecord.tags),
+    changeSummary: versionRecord.changeSummary,
+    metadata: fromJSON(versionRecord.metadata),
+    createdAt: versionRecord.createdAt,
+  };
+
+  successResponse(res, result, '获取版本详情成功');
 });

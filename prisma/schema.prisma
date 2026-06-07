@@ -170,15 +170,36 @@ model KnowledgeEntry {
   content       String
   source        String?
   tags          String?
+  version       Int       @default(1)
   embedding     String?
   metadata      String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id])
+  versions      KnowledgeEntryVersion[]
 
   @@index([knowledgeBaseId])
   @@index([title])
   @@index([source])
+  @@index([createdAt])
+  @@index([updatedAt])
+}
+
+model KnowledgeEntryVersion {
+  id            String    @id @default(uuid())
+  entryId       String
+  version       Int
+  title         String
+  content       String
+  source        String?
+  tags          String?
+  changeSummary String?
+  metadata      String?
+  createdAt     DateTime  @default(now())
+  entry         KnowledgeEntry @relation(fields: [entryId], references: [id])
+
+  @@index([entryId])
+  @@index([version])
   @@index([createdAt])
 }
 

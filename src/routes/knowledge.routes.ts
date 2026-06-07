@@ -9,7 +9,10 @@ import {
   addEntry,
   batchAddEntries,
   listEntries,
+  updateEntry,
   deleteEntry,
+  listEntryVersions,
+  getEntryVersion,
   searchKnowledge,
   askQuestion,
 } from '../controllers/knowledge.controller';
@@ -27,7 +30,10 @@ router.delete('/:id', deleteKnowledgeBase);
 router.get('/:id/entries', listEntries);
 router.post('/:id/entries', addEntry);
 router.post('/:id/entries/batch', batchAddEntries);
+router.put('/:id/entries/:entryId', updateEntry);
 router.delete('/:id/entries/:entryId', deleteEntry);
+router.get('/:id/entries/:entryId/versions', listEntryVersions);
+router.get('/:id/entries/:entryId/versions/:version', getEntryVersion);
 
 router.get('/:id/search', searchKnowledge);
 router.post('/:id/ask', askQuestion);

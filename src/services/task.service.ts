@@ -194,12 +194,13 @@ export const processTask = async (taskId: string, source: string = 'auto') => {
     const taskRunId = getCurrentTaskRunId(taskId);
     const newRetryCount = task.retryCount + 1;
     const shouldRetry = newRetryCount < task.maxRetries;
+    const errorMessage = error.message || '未知错误';
 
     await prisma.task.update({
       where: { id: taskId },
       data: {
         status: shouldRetry ? 'pending' : 'failed',
-        errorMessage: error.message,
+        errorMessage,
         retryCount: newRetryCount,
         progress: 0,
       },
@@ -210,28 +211,32 @@ export const processTask = async (taskId: string, source: string = 'auto') => {
         where: { id: taskRunId },
         data: {
           status: 'failed',
-          errorMessage: error.message,
+          errorMessage,
           completedAt: new Date(),
         },
       });
     }
 
     try {
+      const retrySuggestion = shouldRetry 
+        ? '系统将自动重试，或稍后可手动重试' 
+        : '已达到最大重试次数，请检查输入后手动重试';
+      
       await prisma.errorLog.create({
         data: {
           errorCode: `TASK_FAILED_${task.type.toUpperCase()}`,
-          errorMessage: error.message,
+          errorMessage,
           stackTrace: error.stack || null,
           endpoint: `/api/v1/tasks/${taskId}`,
           apiKeyId: task.apiKeyId,
-          retrySuggestion: shouldRetry 
-            ? '系统将自动重试，或稍后可手动重试' 
-            : '已达到最大重试次数，请检查输入后手动重试',
+          retrySuggestion,
           metadata: toJSON({
-            taskId,
+            taskId: taskId,
+            taskTaskId: task.taskId,
             taskType: task.type,
             retryCount: newRetryCount,
             maxRetries: task.maxRetries,
+            taskRunId: taskRunId,
           }),
         },
       });

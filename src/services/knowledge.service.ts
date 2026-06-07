@@ -7,6 +7,7 @@ interface SearchResult {
   content: string;
   source: string | null;
   tags: string[] | null;
+  version: number;
   relevance: number;
   summary: string;
   matchedFields: string[];
@@ -173,12 +174,12 @@ export const searchKnowledgeEntries = async (
   }
 
   if (options?.startDate || options?.endDate) {
-    where.createdAt = {};
+    where.updatedAt = {};
     if (options.startDate) {
-      where.createdAt.gte = options.startDate;
+      where.updatedAt.gte = options.startDate;
     }
     if (options.endDate) {
-      where.createdAt.lte = options.endDate;
+      where.updatedAt.lte = options.endDate;
     }
   }
 
@@ -190,6 +191,7 @@ export const searchKnowledgeEntries = async (
       content: true,
       source: true,
       tags: true,
+      version: true,
     },
   });
 
@@ -225,6 +227,7 @@ export const searchKnowledgeEntries = async (
         content: entry.content,
         source: entry.source,
         tags,
+        version: entry.version,
         relevance,
         summary,
         matchedFields,

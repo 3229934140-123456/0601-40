@@ -1006,16 +1006,31 @@ export const getErrorDetail = asyncHandler(async (
 
   let taskInfo = null;
   let canRetry = false;
-  const taskId = metadata?.taskId;
-  if (taskId) {
-    const task = await prisma.task.findFirst({
-      where: { taskId },
-      select: { id: true, taskId: true, type: true, status: true, retryCount: true, maxRetries: true },
+  let retrySuggestion = null;
+  let lastError = null;
+  const taskUuid = metadata?.taskId;
+  if (taskUuid) {
+    const task = await prisma.task.findUnique({
+      where: { id: taskUuid },
+      select: {
+        id: true,
+        taskId: true,
+        type: true,
+        status: true,
+        retryCount: true,
+        maxRetries: true,
+        errorMessage: true,
+        progress: true,
+      },
     });
     if (task) {
       taskInfo = task;
+      lastError = task.errorMessage;
       if (task.status === 'failed' && task.retryCount < task.maxRetries) {
         canRetry = true;
+        retrySuggestion = `任务已失败 ${task.retryCount} 次，还可重试 ${task.maxRetries - task.retryCount} 次，可调用重试接口重新执行任务`;
+      } else if (task.status === 'failed') {
+        retrySuggestion = '已达到最大重试次数，请检查输入后手动重试';
       }
     }
   }
@@ -1040,12 +1055,13 @@ export const getErrorDetail = asyncHandler(async (
     stackTrace: error.stackTrace,
     endpoint: error.endpoint,
     apiKeyId: error.apiKeyId,
-    retrySuggestion: error.retrySuggestion,
+    retrySuggestion: retrySuggestion || error.retrySuggestion,
     metadata,
     createdAt: error.createdAt,
     apiKey,
     taskInfo,
     canRetry,
+    lastError,
   }, '获取错误详情成功');
 });
 
@@ -1117,16 +1133,308 @@ export const getAuditLogDetail = asyncHandler(async (
     return next(new AppError(404, 'AUDIT_LOG_NOT_FOUND', '审计日志不存在', '请检查 ID 是否正确'));
   }
 
+  const details = fromJSON(log.details);
+  const operator = details?.operator;
+
+  let relatedLogs: any[] = [];
+
+  if (operator) {
+    const [beforeLogs, afterLogs] = await Promise.all([
+      prisma.auditLog.findMany({
+        where: {
+          id: { not: id },
+          createdAt: { lt: log.createdAt },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          action: true,
+          resourceType: true,
+          resourceId: true,
+          result: true,
+          createdAt: true,
+          details: true,
+        },
+      }),
+      prisma.auditLog.findMany({
+        where: {
+          id: { not: id },
+          createdAt: { gt: log.createdAt },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 5,
+        select: {
+          id: true,
+          action: true,
+          resourceType: true,
+          resourceId: true,
+          result: true,
+          createdAt: true,
+          details: true,
+        },
+      }),
+    ]);
+
+    const filteredBefore = beforeLogs.filter(l => {
+      const d = fromJSON(l.details);
+      return d?.operator === operator;
+    }).slice(0, 5);
+
+    const filteredAfter = afterLogs.filter(l => {
+      const d = fromJSON(l.details);
+      return d?.operator === operator;
+    }).slice(0, 5);
+
+    const currentLog = {
+      id: log.id,
+      action: log.action,
+      resourceType: log.resourceType,
+      resourceId: log.resourceId,
+      result: log.result,
+      createdAt: log.createdAt,
+    };
+
+    relatedLogs = [
+      ...filteredBefore.map(l => ({
+        id: l.id,
+        action: l.action,
+        resourceType: l.resourceType,
+        resourceId: l.resourceId,
+        result: l.result,
+        createdAt: l.createdAt,
+      })).reverse(),
+      currentLog,
+      ...filteredAfter.map(l => ({
+        id: l.id,
+        action: l.action,
+        resourceType: l.resourceType,
+        resourceId: l.resourceId,
+        result: l.result,
+        createdAt: l.createdAt,
+      })),
+    ];
+  } else if (log.resourceId) {
+    const [beforeLogs, afterLogs] = await Promise.all([
+      prisma.auditLog.findMany({
+        where: {
+          id: { not: id },
+          resourceId: log.resourceId,
+          createdAt: { lt: log.createdAt },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          action: true,
+          resourceType: true,
+          resourceId: true,
+          result: true,
+          createdAt: true,
+        },
+      }),
+      prisma.auditLog.findMany({
+        where: {
+          id: { not: id },
+          resourceId: log.resourceId,
+          createdAt: { gt: log.createdAt },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 5,
+        select: {
+          id: true,
+          action: true,
+          resourceType: true,
+          resourceId: true,
+          result: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    const currentLog = {
+      id: log.id,
+      action: log.action,
+      resourceType: log.resourceType,
+      resourceId: log.resourceId,
+      result: log.result,
+      createdAt: log.createdAt,
+    };
+
+    relatedLogs = [
+      ...beforeLogs.reverse(),
+      currentLog,
+      ...afterLogs,
+    ];
+  }
+
   successResponse(res, {
     ...log,
-    details: fromJSON(log.details),
+    details,
+    relatedLogs,
   }, '获取审计日志详情成功');
 });
 
 const getAuditStatsSchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
+  granularity: z.enum(['hour', 'day']).optional().default('day'),
 });
+
+const generateTrendData = async (granularity: 'hour' | 'day', where: any) => {
+  const now = new Date();
+  const points: { time: string; total: number; success: number; fail: number }[] = [];
+
+  if (granularity === 'hour') {
+    for (let i = 23; i >= 0; i--) {
+      const hour = new Date(now);
+      hour.setHours(hour.getHours() - i, 0, 0, 0);
+      const nextHour = new Date(hour);
+      nextHour.setHours(nextHour.getHours() + 1);
+      const timeStr = `${hour.getFullYear()}-${String(hour.getMonth() + 1).padStart(2, '0')}-${String(hour.getDate()).padStart(2, '0')} ${String(hour.getHours()).padStart(2, '0')}:00`;
+      points.push({ time: timeStr, total: 0, success: 0, fail: 0 });
+    }
+  } else {
+    for (let i = 6; i >= 0; i--) {
+      const day = new Date(now);
+      day.setDate(day.getDate() - i);
+      day.setHours(0, 0, 0, 0);
+      const timeStr = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+      points.push({ time: timeStr, total: 0, success: 0, fail: 0 });
+    }
+  }
+
+  const trendWhere = { ...where };
+  if (granularity === 'hour') {
+    const twentyFourHoursAgo = new Date(now);
+    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+    trendWhere.createdAt = { ...trendWhere.createdAt, gte: twentyFourHoursAgo };
+  } else {
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    trendWhere.createdAt = { ...trendWhere.createdAt, gte: sevenDaysAgo };
+  }
+
+  const logs = await prisma.auditLog.findMany({
+    where: trendWhere,
+    select: {
+      createdAt: true,
+      result: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  logs.forEach(log => {
+    const createdAt = new Date(log.createdAt);
+    let index = -1;
+
+    if (granularity === 'hour') {
+      const firstHour = new Date(now);
+      firstHour.setHours(firstHour.getHours() - 23, 0, 0, 0);
+      index = Math.floor((createdAt.getTime() - firstHour.getTime()) / (1000 * 60 * 60));
+    } else {
+      const firstDay = new Date(now);
+      firstDay.setDate(firstDay.getDate() - 6);
+      firstDay.setHours(0, 0, 0, 0);
+      index = Math.floor((createdAt.getTime() - firstDay.getTime()) / (1000 * 60 * 60 * 24));
+    }
+
+    if (index >= 0 && index < points.length) {
+      points[index].total++;
+      if (log.result === 'success') points[index].success++;
+      if (log.result === 'fail') points[index].fail++;
+    }
+  });
+
+  return points;
+};
+
+const detectRisks = async () => {
+  const risks: { type: string; level: 'high' | 'medium'; message: string; count: number; timeRange: string }[] = [];
+  const oneHourAgo = new Date();
+  oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+
+  const recentLogs = await prisma.auditLog.findMany({
+    where: {
+      createdAt: { gte: oneHourAgo },
+    },
+    select: {
+      id: true,
+      action: true,
+      result: true,
+      details: true,
+      createdAt: true,
+    },
+  });
+
+  const parsedLogs = recentLogs.map(log => ({
+    ...log,
+    details: fromJSON(log.details),
+  }));
+
+  let successCount = 0;
+  let failCount = 0;
+  parsedLogs.forEach(log => {
+    if (log.result === 'success') successCount++;
+    if (log.result === 'fail') failCount++;
+  });
+
+  const total = successCount + failCount;
+  if (total > 0 && failCount > 3) {
+    const failRate = (failCount / total) * 100;
+    if (failRate > 30) {
+      risks.push({
+        type: 'high_failure_rate',
+        level: 'high',
+        message: `最近 1 小时失败率达 ${failRate.toFixed(1)}%，共 ${failCount} 次失败`,
+        count: failCount,
+        timeRange: '最近 1 小时',
+      });
+    }
+  }
+
+  const deleteOpsByOperator = new Map<string, number>();
+  parsedLogs.forEach(log => {
+    if (log.action.startsWith('delete_')) {
+      const operator = log.details?.operator || 'unknown';
+      deleteOpsByOperator.set(operator, (deleteOpsByOperator.get(operator) || 0) + 1);
+    }
+  });
+
+  deleteOpsByOperator.forEach((count, operator) => {
+    if (count > 5) {
+      risks.push({
+        type: 'mass_deletion',
+        level: 'high',
+        message: `操作者 ${operator} 最近 1 小时内执行了 ${count} 次删除操作`,
+        count,
+        timeRange: '最近 1 小时',
+      });
+    }
+  });
+
+  const quotaOpsByOperator = new Map<string, number>();
+  parsedLogs.forEach(log => {
+    if (log.action === 'update_quota') {
+      const operator = log.details?.operator || 'unknown';
+      quotaOpsByOperator.set(operator, (quotaOpsByOperator.get(operator) || 0) + 1);
+    }
+  });
+
+  quotaOpsByOperator.forEach((count, operator) => {
+    if (count > 3) {
+      risks.push({
+        type: 'mass_quota_change',
+        level: 'medium',
+        message: `操作者 ${operator} 最近 1 小时内修改了 ${count} 次额度`,
+        count,
+        timeRange: '最近 1 小时',
+      });
+    }
+  });
+
+  return risks;
+};
 
 export const getAuditStats = asyncHandler(async (
   req: Request,
@@ -1146,7 +1454,7 @@ export const getAuditStats = asyncHandler(async (
     }
   }
 
-  const [totalLogs, byActionRaw, byResourceTypeRaw, topActionsRaw] = await Promise.all([
+  const [totalLogs, byActionRaw, byResourceTypeRaw, topActionsRaw, trend, risks] = await Promise.all([
     prisma.auditLog.groupBy({
       by: ['result'],
       where,
@@ -1171,6 +1479,8 @@ export const getAuditStats = asyncHandler(async (
       orderBy: { _count: { action: 'desc' } },
       take: 10,
     }),
+    generateTrendData(query.granularity, where),
+    detectRisks(),
   ]);
 
   let total = 0;
@@ -1221,6 +1531,8 @@ export const getAuditStats = asyncHandler(async (
     byAction,
     byResourceType,
     topActions,
+    trend,
+    risks,
   }, '获取审计统计成功');
 });
 
@@ -1294,12 +1606,17 @@ export const exportAuditLogs = asyncHandler(async (
     take: 10000,
   });
 
-  const headers = ['操作时间', '操作者', '请求路径', '动作', '资源类型', '资源ID', '结果', '变化摘要'];
+  const headers = ['操作时间', '操作者', '请求路径', '动作', '资源类型', '资源ID', '资源名称', '结果', '失败原因', '变化摘要', 'IP地址'];
   const rows = logs.map(log => {
     const details = fromJSON(log.details);
     const operator = details?.operator || '';
     const endpoint = details?.endpoint || '';
+    const resourceName = details?.afterData?.name || details?.beforeData?.name || '';
+    const failReason = log.result === 'fail' 
+      ? (details?.errorMessage || details?.details?.errorMessage || '')
+      : '';
     const changeSummary = generateChangeSummary(details);
+    const ip = details?.ip || '';
     return [
       log.createdAt.toISOString(),
       operator,
@@ -1307,8 +1624,11 @@ export const exportAuditLogs = asyncHandler(async (
       log.action,
       log.resourceType,
       log.resourceId || '',
+      resourceName,
       log.result,
+      failReason,
       changeSummary,
+      ip,
     ];
   });
 

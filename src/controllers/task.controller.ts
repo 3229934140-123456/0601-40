@@ -65,36 +65,53 @@ const buildTimeline = (task: any): Array<{ event: string; timestamp: Date; detai
     timeline.push({ event: 'created', timestamp: task.createdAt });
   }
 
+  if (task.startedAt) {
+    timeline.push({ event: 'started', timestamp: task.startedAt });
+  }
+
   if (task.taskRuns && Array.isArray(task.taskRuns)) {
     const sortedRuns = [...task.taskRuns].sort((a, b) => a.runIndex - b.runIndex);
     for (const run of sortedRuns) {
       if (run.startedAt) {
-        const details: any = { runIndex: run.runIndex, source: run.source };
-        timeline.push({ event: 'started', timestamp: run.startedAt, details });
+        timeline.push({
+          event: 'run_started',
+          timestamp: run.startedAt,
+          details: { runIndex: run.runIndex, source: run.source },
+        });
       }
       if (run.status === 'completed' && run.completedAt) {
-        timeline.push({ event: 'completed', timestamp: run.completedAt, details: { runIndex: run.runIndex } });
+        timeline.push({
+          event: 'run_completed',
+          timestamp: run.completedAt,
+          details: { runIndex: run.runIndex },
+        });
       }
       if (run.status === 'failed' && run.completedAt) {
         timeline.push({
-          event: 'failed',
+          event: 'run_failed',
           timestamp: run.completedAt,
           details: { runIndex: run.runIndex, errorMessage: run.errorMessage },
         });
       }
       if (run.status === 'cancelled' && run.completedAt) {
-        timeline.push({ event: 'cancelled', timestamp: run.completedAt, details: { runIndex: run.runIndex } });
-      }
-      if (run.source === 'auto_retry' && run.startedAt) {
-        timeline.push({ event: 'retried', timestamp: run.startedAt, details: { runIndex: run.runIndex, source: 'auto' } });
-      }
-      if (run.source === 'manual_retry' && run.startedAt) {
-        timeline.push({ event: 'retried', timestamp: run.startedAt, details: { runIndex: run.runIndex, source: 'manual' } });
+        timeline.push({
+          event: 'run_cancelled',
+          timestamp: run.completedAt,
+          details: { runIndex: run.runIndex },
+        });
       }
     }
   }
 
-  if (task.cancelledAt && !timeline.find(t => t.event === 'cancelled')) {
+  if (task.completedAt && task.status === 'completed') {
+    timeline.push({ event: 'completed', timestamp: task.completedAt });
+  }
+
+  if (task.completedAt && task.status === 'failed') {
+    timeline.push({ event: 'failed', timestamp: task.completedAt });
+  }
+
+  if (task.cancelledAt) {
     timeline.push({
       event: 'cancelled',
       timestamp: task.cancelledAt,
