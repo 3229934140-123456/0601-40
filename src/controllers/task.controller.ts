@@ -95,7 +95,9 @@ export const createTask = asyncHandler(async (
     'task',
     task.id,
     'success',
-    { taskType: body.type }
+    {
+      details: { taskType: body.type },
+    }
   );
 
   successResponse(res, {
@@ -278,12 +280,16 @@ export const retryTask = asyncHandler(async (
     return next(new AppError(400, 'TASK_NOT_FAILED', '只有失败的任务才能重试', '当前任务状态不支持重试'));
   }
 
+  const lastError = task.errorMessage;
+
   const updatedTask = await prisma.task.update({
     where: { id: task.id },
     data: {
       status: 'pending',
-      errorMessage: null,
       progress: 0,
+      startedAt: null,
+      completedAt: null,
+      outputData: null,
       maxRetries: body.maxRetries !== undefined ? body.maxRetries : task.maxRetries,
     },
   });

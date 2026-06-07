@@ -97,6 +97,25 @@ export const createApiKey = asyncHandler(async (
     },
   });
 
+  await recordAuditLog(
+    undefined,
+    'create_api_key',
+    'api_key',
+    newApiKey.id,
+    'success',
+    {
+      afterData: {
+        name: newApiKey.name,
+        appId: newApiKey.appId,
+        quota: newApiKey.quota,
+        status: newApiKey.status,
+      },
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
+
   successResponse(res, {
     id: newApiKey.id,
     name: newApiKey.name,
@@ -212,6 +231,13 @@ export const updateApiKey = asyncHandler(async (
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
+  const beforeData: any = {};
+  if (name !== undefined) beforeData.name = apiKey.name;
+  if (status !== undefined) beforeData.status = apiKey.status;
+  if (quota !== undefined) beforeData.quota = apiKey.quota;
+  if (rateLimit !== undefined) beforeData.rateLimit = apiKey.rateLimit;
+  if (expiresAt !== undefined) beforeData.expiresAt = apiKey.expiresAt;
+
   const updated = await prisma.apiKey.update({
     where: { id },
     data: {
@@ -222,6 +248,28 @@ export const updateApiKey = asyncHandler(async (
       expiresAt: expiresAt !== undefined ? new Date(expiresAt) : undefined,
     },
   });
+
+  const afterData: any = {};
+  if (name !== undefined) afterData.name = updated.name;
+  if (status !== undefined) afterData.status = updated.status;
+  if (quota !== undefined) afterData.quota = updated.quota;
+  if (rateLimit !== undefined) afterData.rateLimit = updated.rateLimit;
+  if (expiresAt !== undefined) afterData.expiresAt = updated.expiresAt;
+
+  await recordAuditLog(
+    undefined,
+    'update_api_key',
+    'api_key',
+    id,
+    'success',
+    {
+      beforeData,
+      afterData,
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   successResponse(res, {
     id: updated.id,
@@ -246,7 +294,30 @@ export const deleteApiKey = asyncHandler(async (
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
+  const beforeData = {
+    id: apiKey.id,
+    name: apiKey.name,
+    appId: apiKey.appId,
+    status: apiKey.status,
+    quota: apiKey.quota,
+    used: apiKey.used,
+  };
+
   await prisma.apiKey.delete({ where: { id } });
+
+  await recordAuditLog(
+    undefined,
+    'delete_api_key',
+    'api_key',
+    id,
+    'success',
+    {
+      beforeData,
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   successResponse(res, null, 'API Key 删除成功');
 });
@@ -264,10 +335,35 @@ export const updateQuota = asyncHandler(async (
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
+  const beforeData = {
+    quota: apiKey.quota,
+    used: apiKey.used,
+  };
+
   const updated = await prisma.apiKey.update({
     where: { id },
     data: { quota: body.quota },
   });
+
+  const afterData = {
+    quota: updated.quota,
+    used: updated.used,
+  };
+
+  await recordAuditLog(
+    undefined,
+    'update_quota',
+    'api_key',
+    id,
+    'success',
+    {
+      beforeData,
+      afterData,
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   successResponse(res, {
     id: updated.id,
@@ -289,10 +385,35 @@ export const resetQuota = asyncHandler(async (
     return next(new AppError(404, 'API_KEY_NOT_FOUND', 'API Key 不存在', '请检查 ID 是否正确'));
   }
 
+  const beforeData = {
+    quota: apiKey.quota,
+    used: apiKey.used,
+  };
+
   const updated = await prisma.apiKey.update({
     where: { id },
     data: { used: 0 },
   });
+
+  const afterData = {
+    quota: updated.quota,
+    used: updated.used,
+  };
+
+  await recordAuditLog(
+    undefined,
+    'reset_quota',
+    'api_key',
+    id,
+    'success',
+    {
+      beforeData,
+      afterData,
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   successResponse(res, {
     id: updated.id,
@@ -328,6 +449,27 @@ export const createTemplate = asyncHandler(async (
       status: body.status,
     },
   });
+
+  await recordAuditLog(
+    undefined,
+    'create_template',
+    'template',
+    template.id,
+    'success',
+    {
+      afterData: {
+        id: template.id,
+        name: template.name,
+        code: template.code,
+        description: template.description,
+        type: template.type,
+        status: template.status,
+      },
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   successResponse(res, {
     ...template,
@@ -423,6 +565,14 @@ export const updateTemplate = asyncHandler(async (
     return next(new AppError(404, 'TEMPLATE_NOT_FOUND', '模板不存在', '请检查 ID 是否正确'));
   }
 
+  const beforeData: any = {};
+  if (name !== undefined) beforeData.name = template.name;
+  if (description !== undefined) beforeData.description = template.description;
+  if (type !== undefined) beforeData.type = template.type;
+  if (systemPrompt !== undefined) beforeData.systemPrompt = template.systemPrompt;
+  if (config !== undefined) beforeData.config = fromJSON(template.config);
+  if (status !== undefined) beforeData.status = template.status;
+
   const updated = await prisma.sceneTemplate.update({
     where: { id },
     data: {
@@ -434,6 +584,29 @@ export const updateTemplate = asyncHandler(async (
       status: status !== undefined ? status : undefined,
     },
   });
+
+  const afterData: any = {};
+  if (name !== undefined) afterData.name = updated.name;
+  if (description !== undefined) afterData.description = updated.description;
+  if (type !== undefined) afterData.type = updated.type;
+  if (systemPrompt !== undefined) afterData.systemPrompt = updated.systemPrompt;
+  if (config !== undefined) afterData.config = fromJSON(updated.config);
+  if (status !== undefined) afterData.status = updated.status;
+
+  await recordAuditLog(
+    undefined,
+    'update_template',
+    'template',
+    id,
+    'success',
+    {
+      beforeData,
+      afterData,
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   successResponse(res, {
     ...updated,
@@ -453,7 +626,30 @@ export const deleteTemplate = asyncHandler(async (
     return next(new AppError(404, 'TEMPLATE_NOT_FOUND', '模板不存在', '请检查 ID 是否正确'));
   }
 
+  const beforeData = {
+    id: template.id,
+    name: template.name,
+    code: template.code,
+    description: template.description,
+    type: template.type,
+    status: template.status,
+  };
+
   await prisma.sceneTemplate.delete({ where: { id } });
+
+  await recordAuditLog(
+    undefined,
+    'delete_template',
+    'template',
+    id,
+    'success',
+    {
+      beforeData,
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   successResponse(res, null, '模板删除成功');
 });
@@ -482,7 +678,9 @@ export const submitFeedback = asyncHandler(async (
     'feedback',
     feedback.id,
     'success',
-    { rating: body.rating }
+    {
+      details: { rating: body.rating },
+    }
   );
 
   successResponse(res, {
@@ -521,6 +719,20 @@ export const listFeedbacks = asyncHandler(async (
     metadata: fromJSON(f.metadata),
   }));
 
+  await recordAuditLog(
+    undefined,
+    'list_feedbacks',
+    'feedback',
+    undefined,
+    'success',
+    {
+      details: { total, page, pageSize },
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
+
   paginatedResponse(res, data, total, page, pageSize, '获取反馈列表成功');
 });
 
@@ -553,6 +765,20 @@ export const listErrors = asyncHandler(async (
     ...e,
     metadata: fromJSON(e.metadata),
   }));
+
+  await recordAuditLog(
+    undefined,
+    'list_errors',
+    'error',
+    undefined,
+    'success',
+    {
+      details: { total, page, pageSize },
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
 
   paginatedResponse(res, data, total, page, pageSize, '获取错误日志成功');
 });
@@ -606,8 +832,95 @@ export const getErrorDetail = asyncHandler(async (
     return next(new AppError(404, 'ERROR_NOT_FOUND', '错误记录不存在', '请检查 ID 是否正确'));
   }
 
+  await recordAuditLog(
+    undefined,
+    'get_error_detail',
+    'error',
+    id,
+    'success',
+    {
+      operator: 'admin',
+      endpoint: req.originalUrl,
+      ip: req.ip,
+    }
+  );
+
   successResponse(res, {
     ...error,
     metadata: fromJSON(error.metadata),
   }, '获取错误详情成功');
+});
+
+const listAuditLogsSchema = z.object({
+  page: z.string().optional().default('1'),
+  pageSize: z.string().optional().default('20'),
+  action: z.string().optional(),
+  resourceType: z.string().optional(),
+  result: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+export const listAuditLogs = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const query = listAuditLogsSchema.parse(req.query);
+
+  const page = parseInt(query.page as string);
+  const pageSize = parseInt(query.pageSize as string);
+  const skip = (page - 1) * pageSize;
+
+  const where: any = {};
+  if (query.action) where.action = query.action;
+  if (query.resourceType) where.resourceType = query.resourceType;
+  if (query.result) where.result = query.result;
+  if (query.startDate || query.endDate) {
+    where.createdAt = {};
+    if (query.startDate) where.createdAt.gte = new Date(query.startDate as string);
+    if (query.endDate) {
+      const end = new Date(query.endDate as string);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt.lte = end;
+    }
+  }
+
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: pageSize,
+    }),
+    prisma.auditLog.count({ where }),
+  ]);
+
+  const data = logs.map(log => ({
+    ...log,
+    details: fromJSON(log.details),
+  }));
+
+  paginatedResponse(res, data, total, page, pageSize, '获取审计日志成功');
+});
+
+export const getAuditLogDetail = asyncHandler(async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const { id } = req.params;
+
+  const log = await prisma.auditLog.findUnique({
+    where: { id },
+  });
+
+  if (!log) {
+    return next(new AppError(404, 'AUDIT_LOG_NOT_FOUND', '审计日志不存在', '请检查 ID 是否正确'));
+  }
+
+  successResponse(res, {
+    ...log,
+    details: fromJSON(log.details),
+  }, '获取审计日志详情成功');
 });

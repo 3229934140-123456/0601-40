@@ -214,17 +214,27 @@ export const cancelTask = async (taskId: string): Promise<{ success: boolean; st
     taskState.cancelled = true;
   }
 
-  if (task.status === 'pending') {
-    await prisma.task.update({
-      where: { id: taskId },
-      data: {
-        status: 'cancelled',
-        completedAt: new Date(),
-      },
-    });
+  const updateResult = await prisma.task.updateMany({
+    where: {
+      id: taskId,
+      status: { in: ['pending', 'processing'] },
+    },
+    data: {
+      status: 'cancelled',
+      completedAt: new Date(),
+    },
+  });
+
+  if (updateResult.count > 0) {
+    return { success: true, status: 'cancelled' };
   }
 
-  return { success: true, status: 'cancelling' };
+  const finalTask = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { status: true },
+  });
+
+  return { success: false, status: finalTask?.status || 'unknown' };
 };
 
 export const isTaskRunning = (taskId: string) => {

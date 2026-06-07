@@ -55,7 +55,9 @@ export const createSession = asyncHandler(async (
     'session',
     session.id,
     'success',
-    { sessionId }
+    {
+      details: { sessionId },
+    }
   );
 
   successResponse(res, session, '会话创建成功', 201);
@@ -146,7 +148,9 @@ export const sendMessage = asyncHandler(async (
     'session',
     session.id,
     'success',
-    { messageId: assistantMessage.id, tokens: aiResponse.tokens }
+    {
+      details: { messageId: assistantMessage.id, tokens: aiResponse.tokens },
+    }
   );
 
   successResponse(res, {
@@ -293,7 +297,9 @@ export const updateSession = asyncHandler(async (
     'session',
     session.id,
     'success',
-    { title, status }
+    {
+      details: { title, status },
+    }
   );
 
   successResponse(res, updatedSession, '会话更新成功');

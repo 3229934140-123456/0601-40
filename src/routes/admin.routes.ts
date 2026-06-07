@@ -19,14 +19,11 @@ import {
   listErrors,
   getErrorStats,
   getErrorDetail,
+  listAuditLogs,
+  getAuditLogDetail,
 } from '../controllers/admin.controller';
 
 const router = Router();
-
-// 公开接口 - 模板只读
-router.get('/templates', listTemplates);
-router.get('/templates/code/:code', getTemplateByCode);
-router.get('/templates/:id', getTemplate);
 
 // 业务接口 - 需要业务 API Key
 router.post('/feedback', apiKeyAuth, submitFeedback);
@@ -41,14 +38,21 @@ router.delete('/api-keys/:id', deleteApiKey);
 router.post('/api-keys/:id/quota', updateQuota);
 router.post('/api-keys/:id/reset-quota', resetQuota);
 
-router.post('/templates', adminAuth, createTemplate);
-router.put('/templates/:id', adminAuth, updateTemplate);
-router.delete('/templates/:id', adminAuth, deleteTemplate);
+router.use('/templates', adminAuth);
+router.get('/templates', listTemplates);
+router.post('/templates', createTemplate);
+router.get('/templates/code/:code', getTemplateByCode);
+router.get('/templates/:id', getTemplate);
+router.put('/templates/:id', updateTemplate);
+router.delete('/templates/:id', deleteTemplate);
 
 router.get('/feedback', adminAuth, listFeedbacks);
 
 router.get('/errors', adminAuth, listErrors);
 router.get('/errors/stats', adminAuth, getErrorStats);
 router.get('/errors/:id', adminAuth, getErrorDetail);
+
+router.get('/audit-logs', adminAuth, listAuditLogs);
+router.get('/audit-logs/:id', adminAuth, getAuditLogDetail);
 
 export default router;

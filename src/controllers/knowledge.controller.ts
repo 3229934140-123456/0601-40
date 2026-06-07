@@ -61,7 +61,9 @@ export const createKnowledgeBase = asyncHandler(async (
     'knowledge_base',
     knowledgeBase.id,
     'success',
-    { name: body.name }
+    {
+      details: { name: body.name },
+    }
   );
 
   const result = { ...knowledgeBase, metadata: fromJSON(knowledgeBase.metadata) };
@@ -240,7 +242,9 @@ export const addEntry = asyncHandler(async (
     'knowledge_entry',
     entry.id,
     'success',
-    { knowledgeBaseId: id }
+    {
+      details: { knowledgeBaseId: id },
+    }
   );
 
   const result = { ...entry, metadata: fromJSON(entry.metadata) };
@@ -352,8 +356,9 @@ export const searchKnowledge = asyncHandler(async (
     id: r.id,
     title: r.title,
     source: r.source,
-    content: r.content.substring(0, 200) + (r.content.length > 200 ? '...' : ''),
+    summary: r.summary,
     relevance: Math.round(r.relevance * 100) / 100,
+    matchedFields: r.matchedFields,
   }));
 
   await recordUsage(apiKeyId, 'knowledge_search', 1, query.query.length);
@@ -364,7 +369,7 @@ export const searchKnowledge = asyncHandler(async (
     'knowledge_base',
     id,
     'success',
-    { query: query.query, resultCount: formattedResults.length }
+    { details: { query: query.query, resultCount: formattedResults.length } }
   );
 
   successResponse(res, {
@@ -399,8 +404,9 @@ export const askQuestion = asyncHandler(async (
     id: r.id,
     title: r.title,
     source: r.source,
-    content: r.content.substring(0, 200) + (r.content.length > 200 ? '...' : ''),
+    summary: r.summary,
     relevance: Math.round(r.relevance * 100) / 100,
+    matchedFields: r.matchedFields,
   }));
 
   const references = formattedCitations.map(c => c.source).filter(Boolean);
@@ -414,7 +420,7 @@ export const askQuestion = asyncHandler(async (
     'knowledge_base',
     id,
     'success',
-    { query: body.query, hitCount: citations.length }
+    { details: { query: body.query, hitCount: citations.length } }
   );
 
   successResponse(res, {

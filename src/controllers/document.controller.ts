@@ -99,7 +99,9 @@ export const uploadDocument = asyncHandler(async (
     'document',
     document.id,
     'success',
-    { fileName: req.file.originalname, size: req.file.size }
+    {
+      details: { fileName: req.file.originalname, size: req.file.size },
+    }
   );
 
   successResponse(res, {
@@ -239,7 +241,9 @@ export const updateDocument = asyncHandler(async (
     'document',
     id,
     'success',
-    { name: body.name }
+    {
+      details: { name: body.name },
+    }
   );
 
   successResponse(res, updatedDocument, '文档更新成功');

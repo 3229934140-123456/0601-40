@@ -50,9 +50,11 @@ export const checkText = asyncHandler(async (
     undefined,
     passed ? 'passed' : 'blocked',
     {
-      textLength: body.text.length,
-      matchedCount: result.matchedWords.length,
-      matchedWords: result.matchedWords.map(w => w.word),
+      details: {
+        textLength: body.text.length,
+        matchedCount: result.matchedWords.length,
+        matchedWords: result.matchedWords.map(w => w.word),
+      },
     }
   );
 

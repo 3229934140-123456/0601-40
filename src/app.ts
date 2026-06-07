@@ -9,6 +9,7 @@ import taskRoutes from './routes/task.routes';
 import knowledgeRoutes from './routes/knowledge.routes';
 import auditRoutes from './routes/audit.routes';
 import statsRoutes from './routes/stats.routes';
+import templateRoutes from './routes/template.routes';
 import adminRoutes from './routes/admin.routes';
 
 dotenv.config();
@@ -40,6 +41,7 @@ app.get('/', (req, res) => {
       sessions: '/api/v1/sessions',
       documents: '/api/v1/documents',
       tasks: '/api/v1/tasks',
+      templates: '/api/v1/templates',
       knowledge: '/api/v1/knowledge',
       audit: '/api/v1/audit',
       stats: '/api/v1/stats',
@@ -54,6 +56,7 @@ app.use('/api/v1/tasks', taskRoutes);
 app.use('/api/v1/knowledge', knowledgeRoutes);
 app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1/stats', statsRoutes);
+app.use('/api/v1/templates', templateRoutes);
 app.use('/api/v1/admin', adminRoutes);
 
 app.use(errorHandler);

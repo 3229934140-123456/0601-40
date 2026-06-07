@@ -1,4 +1,5 @@
 import prisma from '../prisma';
+import { toJSON, fromJSON } from '../utils/json';
 
 export const recordUsage = async (
   apiKeyId: string,
@@ -52,9 +53,32 @@ export const recordAuditLog = async (
   resourceType: string,
   resourceId: string | undefined,
   result: string,
-  details?: any,
-  ip?: string
+  options?: {
+    details?: any;
+    beforeData?: any;
+    afterData?: any;
+    operator?: string;
+    endpoint?: string;
+    ip?: string;
+  }
 ) => {
+  const detailsObj: any = {};
+  if (options?.details) {
+    detailsObj.details = options.details;
+  }
+  if (options?.beforeData) {
+    detailsObj.beforeData = options.beforeData;
+  }
+  if (options?.afterData) {
+    detailsObj.afterData = options.afterData;
+  }
+  if (options?.operator) {
+    detailsObj.operator = options.operator;
+  }
+  if (options?.endpoint) {
+    detailsObj.endpoint = options.endpoint;
+  }
+
   await prisma.auditLog.create({
     data: {
       apiKeyId,
@@ -62,8 +86,8 @@ export const recordAuditLog = async (
       resourceType,
       resourceId,
       result,
-      details: details ? JSON.stringify(details) : undefined,
-      ip,
+      details: Object.keys(detailsObj).length > 0 ? toJSON(detailsObj) : null,
+      ip: options?.ip || null,
     },
   });
 };
