@@ -1,0 +1,281 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model ApiKey {
+  id            String    @id @default(uuid())
+  key           String    @unique
+  name          String
+  appId         String
+  secretHash    String
+  status        String    @default("active")
+  quota         Int       @default(1000)
+  used          Int       @default(0)
+  rateLimit     Int       @default(100)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  expiresAt     DateTime?
+  sessions      Session[]
+  documents     Document[]
+  tasks         Task[]
+  knowledgeBases KnowledgeBase[]
+  auditLogs     AuditLog[]
+  feedbacks     Feedback[]
+  stats         UsageStat[]
+
+  @@index([appId])
+  @@index([status])
+}
+
+model Session {
+  id            String    @id @default(uuid())
+  apiKeyId      String
+  sessionId     String
+  title         String?
+  systemPrompt  String?
+  model         String    @default("default")
+  status        String    @default("active")
+  messageCount  Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id])
+  messages      Message[]
+  taskRuns      TaskRun[]
+
+  @@index([apiKeyId])
+  @@index([sessionId])
+}
+
+model Message {
+  id            String    @id @default(uuid())
+  sessionId     String
+  role          String
+  content       String
+  tokens        Int       @default(0)
+  metadata      String?
+  createdAt     DateTime  @default(now())
+  session       Session   @relation(fields: [sessionId], references: [id])
+  citations     Citation[]
+
+  @@index([sessionId])
+  @@index([role])
+}
+
+model Document {
+  id            String    @id @default(uuid())
+  apiKeyId      String
+  name          String
+  originalName  String
+  type          String
+  size          Int
+  path          String
+  status        String    @default("pending")
+  parsedContent String?
+  pages         Int?
+  metadata      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id])
+  chunks        DocumentChunk[]
+
+  @@index([apiKeyId])
+  @@index([status])
+}
+
+model DocumentChunk {
+  id            String    @id @default(uuid())
+  documentId    String
+  chunkIndex    Int
+  content       String
+  embedding     String?
+  metadata      String?
+  createdAt     DateTime  @default(now())
+  document      Document  @relation(fields: [documentId], references: [id])
+
+  @@index([documentId])
+}
+
+model Task {
+  id            String    @id @default(uuid())
+  apiKeyId      String
+  taskId        String
+  type          String
+  status        String    @default("pending")
+  priority      Int       @default(5)
+  inputData     String
+  outputData    String?
+  progress      Int       @default(0)
+  errorMessage  String?
+  retryCount    Int       @default(0)
+  maxRetries    Int       @default(3)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id])
+  taskRuns      TaskRun[]
+
+  @@index([apiKeyId])
+  @@index([taskId])
+  @@index([type])
+  @@index([status])
+}
+
+model TaskRun {
+  id            String    @id @default(uuid())
+  taskId        String
+  sessionId     String?
+  runIndex      Int
+  status        String    @default("running")
+  inputData     String?
+  outputData    String?
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  task          Task      @relation(fields: [taskId], references: [id])
+  session       Session?  @relation(fields: [sessionId], references: [id])
+
+  @@index([taskId])
+}
+
+model KnowledgeBase {
+  id            String    @id @default(uuid())
+  apiKeyId      String
+  name          String
+  description   String?
+  status        String    @default("active")
+  docCount      Int       @default(0)
+  metadata      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id])
+  entries       KnowledgeEntry[]
+
+  @@index([apiKeyId])
+}
+
+model KnowledgeEntry {
+  id            String    @id @default(uuid())
+  knowledgeBaseId String
+  title         String
+  content       String
+  source        String?
+  embedding     String?
+  metadata      String?
+  createdAt     DateTime  @default(now())
+  knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id])
+
+  @@index([knowledgeBaseId])
+  @@index([title])
+}
+
+model Citation {
+  id            String    @id @default(uuid())
+  messageId     String
+  source        String
+  content       String
+  relevance     Float?
+  pageNumber    Int?
+  createdAt     DateTime  @default(now())
+  message       Message   @relation(fields: [messageId], references: [id])
+
+  @@index([messageId])
+}
+
+model SensitiveWord {
+  id            String    @id @default(uuid())
+  word          String    @unique
+  category      String
+  severity      String    @default("medium")
+  replacement   String?
+  enabled       Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  @@index([category])
+  @@index([severity])
+}
+
+model AuditLog {
+  id            String    @id @default(uuid())
+  apiKeyId      String?
+  action        String
+  resourceType  String
+  resourceId    String?
+  result        String
+  details       String?
+  ip            String?
+  createdAt     DateTime  @default(now())
+  apiKey        ApiKey?   @relation(fields: [apiKeyId], references: [id])
+
+  @@index([apiKeyId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Feedback {
+  id            String    @id @default(uuid())
+  apiKeyId      String
+  sessionId     String?
+  messageId     String?
+  rating        Int
+  comment       String?
+  category      String?
+  metadata      String?
+  createdAt     DateTime  @default(now())
+  apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id])
+
+  @@index([apiKeyId])
+  @@index([rating])
+}
+
+model UsageStat {
+  id            String    @id @default(uuid())
+  apiKeyId      String
+  date          DateTime
+  metricType    String
+  count         Int       @default(0)
+  tokens        Int       @default(0)
+  latency       Float?
+  createdAt     DateTime  @default(now())
+  apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id])
+
+  @@index([apiKeyId])
+  @@index([date])
+  @@index([metricType])
+}
+
+model SceneTemplate {
+  id            String    @id @default(uuid())
+  name          String
+  code          String    @unique
+  description   String?
+  type          String
+  systemPrompt  String?
+  config        String?
+  status        String    @default("active")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([type])
+  @@index([status])
+}
+
+model ErrorLog {
+  id            String    @id @default(uuid())
+  errorCode     String
+  errorMessage  String
+  stackTrace    String?
+  endpoint      String?
+  apiKeyId      String?
+  retrySuggestion String?
+  metadata      String?
+  createdAt     DateTime  @default(now())
+
+  @@index([errorCode])
+  @@index([apiKeyId])
+  @@index([createdAt])
+}
